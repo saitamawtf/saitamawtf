@@ -1,0 +1,694 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ORB Bot — Phemex Dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <style>
+    :root { color-scheme: dark; }
+    body { background: #0d1117; color: #e6edf3; font-family: 'Segoe UI', system-ui, sans-serif; }
+
+    /* Scrollbar */
+    ::-webkit-scrollbar { width: 5px; }
+    ::-webkit-scrollbar-track { background: #161b22; }
+    ::-webkit-scrollbar-thumb { background: #30363d; border-radius: 3px; }
+
+    /* Glass card */
+    .card {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 10px;
+    }
+
+    /* Status pill */
+    .pill-running  { background:#0f3a1e; color:#3fb950; border:1px solid #238636; }
+    .pill-stopped  { background:#2a1a1a; color:#f85149; border:1px solid #6e2230; }
+    .pill-waiting  { background:#1a1a2e; color:#79c0ff; border:1px solid #1f6feb; }
+
+    /* Log colours */
+    .log-INFO    { color: #8b949e; }
+    .log-WARNING { color: #e3b341; }
+    .log-ERROR   { color: #f85149; }
+
+    /* Trade result badges */
+    .badge-tp_hit  { background:#0f3a1e; color:#3fb950; }
+    .badge-sl_hit  { background:#2a1a1a; color:#f85149; }
+    .badge-open    { background:#1a1a2e; color:#79c0ff; }
+    .badge-closed  { background:#21262d; color:#8b949e; }
+
+    /* Input style */
+    input, select {
+      background: #0d1117;
+      border: 1px solid #30363d;
+      border-radius: 6px;
+      color: #e6edf3;
+      padding: 6px 10px;
+      width: 100%;
+      font-size: 13px;
+      transition: border-color .2s;
+    }
+    input:focus, select:focus {
+      outline: none;
+      border-color: #388bfd;
+    }
+    input[type="password"] { letter-spacing: .1em; }
+
+    /* Buttons */
+    .btn-green { background:#238636; color:#fff; border-radius:6px; padding:8px 18px; font-size:13px; font-weight:600; transition:background .2s; }
+    .btn-green:hover { background:#2ea043; }
+    .btn-green:disabled { background:#21262d; color:#484f58; cursor:not-allowed; }
+    .btn-red   { background:#6e2230; color:#fff; border-radius:6px; padding:8px 18px; font-size:13px; font-weight:600; transition:background .2s; }
+    .btn-red:hover   { background:#8d2b3a; }
+    .btn-red:disabled { background:#21262d; color:#484f58; cursor:not-allowed; }
+
+    /* Tab underline */
+    .tab-active { border-bottom: 2px solid #388bfd; color:#e6edf3; }
+    .tab-inactive { color:#8b949e; }
+
+    /* Log window */
+    #logWindow {
+      font-family: 'Courier New', monospace;
+      font-size: 12px;
+      height: 280px;
+      overflow-y: auto;
+      background: #0d1117;
+      border: 1px solid #21262d;
+      border-radius: 6px;
+      padding: 10px 12px;
+    }
+
+    /* Stat number */
+    .stat-num { font-size: 1.6rem; font-weight: 700; line-height: 1; }
+    .stat-pos { color: #3fb950; }
+    .stat-neg { color: #f85149; }
+    .stat-neu { color: #79c0ff; }
+
+    /* Table */
+    table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+    th { background:#161b22; color:#8b949e; font-weight:600; padding:8px 12px; text-align:left; position:sticky; top:0; }
+    td { padding:7px 12px; border-bottom:1px solid #21262d; }
+    tr:hover td { background:#1c2128; }
+
+    /* Range / number input labels */
+    label { font-size: 12px; color: #8b949e; display:block; margin-bottom:3px; }
+
+    /* Spinner */
+    @keyframes spin { to { transform:rotate(360deg); } }
+    .spinner { animation: spin 1s linear infinite; }
+
+    /* Blink */
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
+    .blink { animation: blink 1.2s ease-in-out infinite; }
+  </style>
+</head>
+<body class="min-h-screen p-4">
+
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<!--  HEADER                                                                     -->
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<div class="flex items-center justify-between mb-5">
+  <div class="flex items-center gap-3">
+    <div class="w-9 h-9 rounded-lg bg-blue-600 flex items-center justify-center font-bold text-white text-sm">ORB</div>
+    <div>
+      <h1 class="text-base font-bold leading-none">ORB Bot Dashboard</h1>
+      <p class="text-xs text-gray-500 mt-0.5">Phemex — Opening Range Breakout</p>
+    </div>
+  </div>
+  <div class="flex items-center gap-3">
+    <span id="statusPill" class="pill-stopped px-3 py-1 rounded-full text-xs font-semibold">⏹ Detenido</span>
+    <span id="clockDisplay" class="text-xs text-gray-500 font-mono"></span>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<!--  MAIN GRID                                                                  -->
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<div class="grid grid-cols-12 gap-4">
+
+  <!-- ── LEFT COLUMN: Config ─────────────────────────────────────────────── -->
+  <div class="col-span-12 lg:col-span-3 space-y-4">
+
+    <!-- API Keys -->
+    <div class="card p-4">
+      <h2 class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">🔑 Credenciales Phemex</h2>
+      <div class="space-y-3">
+        <div>
+          <label>API Key</label>
+          <input id="apiKey" type="text" placeholder="tu_api_key" autocomplete="off" />
+        </div>
+        <div>
+          <label>API Secret</label>
+          <input id="apiSecret" type="password" placeholder="••••••••••••••••" />
+        </div>
+        <div class="flex items-center gap-2 mt-1">
+          <input id="testnet" type="checkbox" checked class="w-4 h-4 accent-blue-500" style="width:auto;padding:0;border:none;" />
+          <label for="testnet" style="margin:0;font-size:12px;color:#8b949e;">Usar Testnet</label>
+        </div>
+      </div>
+    </div>
+
+    <!-- Strategy config -->
+    <div class="card p-4">
+      <h2 class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">⚙️ Configuración</h2>
+      <div class="space-y-3">
+
+        <div>
+          <label>Modo ORB</label>
+          <select id="mode">
+            <option value="classic">Clásico — breakout directo</option>
+            <option value="fvg">FVG — retest del gap</option>
+          </select>
+        </div>
+
+        <div>
+          <label>Asset / Symbol</label>
+          <select id="symbol">
+            <option value="BTCUSDT">BTCUSDT — Bitcoin</option>
+            <option value="ETHUSDT">ETHUSDT — Ethereum</option>
+            <option value="SOLUSDT">SOLUSDT — Solana</option>
+            <option value="XRPUSDT">XRPUSDT — XRP</option>
+            <option value="BNBUSDT">BNBUSDT — BNB</option>
+          </select>
+        </div>
+
+        <div>
+          <label>Multiplicador TP / RR <span id="multVal" class="text-blue-400 font-mono">2.0×</span></label>
+          <input id="multiplier" type="range" min="1" max="5" step="0.5" value="2"
+                 style="padding:0;border:none;background:transparent;"
+                 oninput="document.getElementById('multVal').textContent=parseFloat(this.value).toFixed(1)+'×'" />
+          <div class="flex justify-between text-gray-600" style="font-size:10px;margin-top:2px;">
+            <span>1×</span><span>3×</span><span>5×</span>
+          </div>
+        </div>
+
+        <div id="slStdevRow">
+          <label>SL STDEV (modo clásico) <span id="slVal" class="text-yellow-400 font-mono">0.5</span></label>
+          <input id="slStdev" type="range" min="0.25" max="1" step="0.25" value="0.5"
+                 style="padding:0;border:none;background:transparent;"
+                 oninput="document.getElementById('slVal').textContent=parseFloat(this.value).toFixed(2)" />
+          <div class="flex justify-between text-gray-600" style="font-size:10px;margin-top:2px;">
+            <span>0.25</span><span>0.5</span><span>1.0</span>
+          </div>
+        </div>
+
+        <div>
+          <label>Riesgo por trade (USD)</label>
+          <input id="riskUsd" type="number" value="50" min="1" max="10000" />
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Controls -->
+    <div class="card p-4">
+      <h2 class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">🎮 Control</h2>
+      <div class="flex gap-2">
+        <button id="btnStart" class="btn-green flex-1" onclick="startBot()">▶ Iniciar Bot</button>
+        <button id="btnStop"  class="btn-red flex-1"   onclick="stopBot()" disabled>⏹ Detener</button>
+      </div>
+      <p id="controlMsg" class="text-xs text-gray-500 mt-2 text-center"></p>
+    </div>
+
+    <!-- Mode description -->
+    <div id="modeCard" class="card p-4 text-xs text-gray-400 leading-relaxed"></div>
+
+  </div><!-- /left column -->
+
+  <!-- ── RIGHT COLUMN: Logs + Stats ──────────────────────────────────────── -->
+  <div class="col-span-12 lg:col-span-9 space-y-4">
+
+    <!-- Stat cards row -->
+    <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <div class="card p-4 text-center">
+        <div class="text-xs text-gray-500 mb-1">Total Trades</div>
+        <div id="stTotal" class="stat-num stat-neu">—</div>
+      </div>
+      <div class="card p-4 text-center">
+        <div class="text-xs text-gray-500 mb-1">Win Rate</div>
+        <div id="stWinRate" class="stat-num">—</div>
+      </div>
+      <div class="card p-4 text-center">
+        <div class="text-xs text-gray-500 mb-1">PnL Total (USD)</div>
+        <div id="stPnl" class="stat-num">—</div>
+      </div>
+      <div class="card p-4 text-center">
+        <div class="text-xs text-gray-500 mb-1">Mejor / Peor</div>
+        <div id="stBestWorst" class="stat-num" style="font-size:1rem;">—</div>
+      </div>
+    </div>
+
+    <!-- Tabs -->
+    <div class="card">
+      <div class="flex border-b border-gray-800 px-4">
+        <button class="tab-active py-3 px-4 text-xs font-semibold mr-2" onclick="switchTab('logs',this)">📋 Logs en vivo</button>
+        <button class="tab-inactive py-3 px-4 text-xs font-semibold mr-2" onclick="switchTab('trades',this)">📊 Ejecuciones</button>
+        <button class="tab-inactive py-3 px-4 text-xs font-semibold" onclick="switchTab('chart',this)">📈 Equity Curve</button>
+      </div>
+
+      <!-- Logs panel -->
+      <div id="panel-logs" class="p-4">
+        <div class="flex justify-between items-center mb-2">
+          <span class="text-xs text-gray-500">Últimas entradas del bot</span>
+          <button onclick="clearLogs()" class="text-xs text-gray-600 hover:text-gray-400">Limpiar</button>
+        </div>
+        <div id="logWindow"></div>
+      </div>
+
+      <!-- Trades panel -->
+      <div id="panel-trades" class="p-4 hidden">
+        <div class="flex justify-between items-center mb-3">
+          <span class="text-xs text-gray-500">Historial de operaciones</span>
+          <div class="flex gap-2">
+            <select id="filterMode" onchange="renderTrades()" style="width:auto;padding:4px 8px;font-size:11px;">
+              <option value="">Todos los modos</option>
+              <option value="classic">Clásico</option>
+              <option value="fvg">FVG</option>
+            </select>
+            <select id="filterResult" onchange="renderTrades()" style="width:auto;padding:4px 8px;font-size:11px;">
+              <option value="">Todos los resultados</option>
+              <option value="tp_hit">TP Hit</option>
+              <option value="sl_hit">SL Hit</option>
+              <option value="open">Abierto</option>
+            </select>
+          </div>
+        </div>
+        <div style="max-height:420px;overflow-y:auto;">
+          <table>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Fecha</th>
+                <th>Modo</th>
+                <th>Symbol</th>
+                <th>Dir.</th>
+                <th>Entry</th>
+                <th>SL</th>
+                <th>TP</th>
+                <th>Contratos</th>
+                <th>Resultado</th>
+                <th>PnL USD</th>
+              </tr>
+            </thead>
+            <tbody id="tradesBody">
+              <tr><td colspan="11" class="text-center text-gray-500 py-8">Sin ejecuciones aún</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Chart panel -->
+      <div id="panel-chart" class="p-4 hidden">
+        <div class="flex justify-between items-center mb-3">
+          <span class="text-xs text-gray-500">Curva de equity acumulada (USD)</span>
+          <div class="flex gap-4 text-xs">
+            <span class="text-green-400">■ Wins: <b id="chartWins">0</b></span>
+            <span class="text-red-400">■ Losses: <b id="chartLosses">0</b></span>
+            <span class="text-blue-400">■ Open: <b id="chartOpen">0</b></span>
+          </div>
+        </div>
+        <div style="position:relative;height:320px;">
+          <canvas id="equityChart"></canvas>
+        </div>
+        <div class="grid grid-cols-2 gap-4 mt-4">
+          <div style="position:relative;height:200px;">
+            <canvas id="donutChart"></canvas>
+          </div>
+          <div class="flex flex-col justify-center space-y-2 text-sm">
+            <div class="flex justify-between">
+              <span class="text-gray-500">Ganancias:</span>
+              <span id="chartTotalWin" class="text-green-400 font-mono">$0.00</span>
+            </div>
+            <div class="flex justify-between">
+              <span class="text-gray-500">Pérdidas:</span>
+              <span id="chartTotalLoss" class="text-red-400 font-mono">$0.00</span>
+            </div>
+            <div class="flex justify-between border-t border-gray-800 pt-2">
+              <span class="text-gray-400">Neto:</span>
+              <span id="chartNet" class="font-mono font-bold">$0.00</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /card tabs -->
+  </div><!-- /right column -->
+</div><!-- /grid -->
+
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<!--  JAVASCRIPT                                                                  -->
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<script>
+// ── State ──────────────────────────────────────────────────────────────────────
+let allTrades = [];
+let equityChart = null;
+let donutChart  = null;
+let sseSource   = null;
+let logPaused   = false;
+
+// ── Clock ──────────────────────────────────────────────────────────────────────
+function updateClock() {
+  const now = new Date();
+  const utc = now.toUTCString().slice(17, 25);
+  const ny  = new Date(now.toLocaleString('en-US', {timeZone:'America/New_York'}));
+  const nyStr = ny.toTimeString().slice(0,8);
+  document.getElementById('clockDisplay').textContent =
+    `UTC ${utc}  |  NY ${nyStr}`;
+}
+setInterval(updateClock, 1000);
+updateClock();
+
+// ── Mode description ───────────────────────────────────────────────────────────
+const modeDescs = {
+  classic: `<b class="text-gray-200">Modo Clásico</b><br>
+    ① Rango ORB: vela m15 de 9:30 AM NY<br>
+    ② Breakout: vela m5 cierra fuera del rango<br>
+    ③ Entry en el precio de breakout<br>
+    ④ SL: <em>SL_STDEV × tamaño_rango</em> dentro<br>
+    ⑤ TP: <em>Multiplicador × tamaño_rango</em> fuera<br>
+    ⑥ Bad day si no hay breakout antes 12 PM NY`,
+  fvg: `<b class="text-gray-200">Modo FVG</b><br>
+    ① Rango ORB idéntico al clásico<br>
+    ② Breakout m5 <em>debe crear un Fair Value Gap</em><br>
+    ③ Esperar retest: precio regresa al FVG<br>
+    ④ Entry en el borde del FVG<br>
+    ⑤ SL: open de la vela que creó el FVG<br>
+    ⑥ TP: RR <em>Multiplicador×</em> desde entry`,
+};
+
+function updateModeDesc() {
+  const m = document.getElementById('mode').value;
+  document.getElementById('modeCard').innerHTML = modeDescs[m] || '';
+  // Show/hide SL stdev row (only relevant in classic)
+  document.getElementById('slStdevRow').style.display = m === 'classic' ? '' : 'none';
+}
+document.getElementById('mode').addEventListener('change', updateModeDesc);
+updateModeDesc();
+
+// ── Tabs ───────────────────────────────────────────────────────────────────────
+function switchTab(name, el) {
+  ['logs','trades','chart'].forEach(t => {
+    document.getElementById('panel-'+t).classList.add('hidden');
+  });
+  document.querySelectorAll('[onclick^="switchTab"]').forEach(b => {
+    b.className = 'tab-inactive py-3 px-4 text-xs font-semibold mr-2';
+  });
+  document.getElementById('panel-'+name).classList.remove('hidden');
+  el.className = 'tab-active py-3 px-4 text-xs font-semibold mr-2';
+
+  if (name === 'trades') loadTrades();
+  if (name === 'chart')  loadStats();
+}
+
+// ── Bot control ────────────────────────────────────────────────────────────────
+async function startBot() {
+  const apiKey    = document.getElementById('apiKey').value.trim();
+  const apiSecret = document.getElementById('apiSecret').value.trim();
+
+  if (!apiKey || !apiSecret) {
+    setMsg('Introduce API Key y Secret', 'red');
+    return;
+  }
+
+  const body = {
+    api_key:    apiKey,
+    api_secret: apiSecret,
+    testnet:    document.getElementById('testnet').checked,
+    symbol:     document.getElementById('symbol').value,
+    mode:       document.getElementById('mode').value,
+    multiplier: parseFloat(document.getElementById('multiplier').value),
+    sl_stdev:   parseFloat(document.getElementById('slStdev').value),
+    risk_usd:   parseFloat(document.getElementById('riskUsd').value),
+  };
+
+  try {
+    const res  = await fetch('/api/bot/start', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (data.ok) {
+      setRunning(true);
+      startSSE();
+      setMsg('Bot iniciado correctamente', 'green');
+    } else {
+      setMsg(data.error || 'Error al iniciar', 'red');
+    }
+  } catch(e) {
+    setMsg('Error de red: ' + e.message, 'red');
+  }
+}
+
+async function stopBot() {
+  await fetch('/api/bot/stop', {method:'POST'});
+  setRunning(false);
+  if (sseSource) { sseSource.close(); sseSource = null; }
+  setMsg('Bot detenido', 'gray');
+}
+
+function setRunning(on) {
+  document.getElementById('btnStart').disabled = on;
+  document.getElementById('btnStop').disabled  = !on;
+  const pill = document.getElementById('statusPill');
+  if (on) {
+    pill.className = 'pill-running px-3 py-1 rounded-full text-xs font-semibold blink';
+    pill.textContent = '● En ejecución';
+  } else {
+    pill.className = 'pill-stopped px-3 py-1 rounded-full text-xs font-semibold';
+    pill.textContent = '⏹ Detenido';
+  }
+}
+
+function setMsg(txt, color) {
+  const el = document.getElementById('controlMsg');
+  const colorMap = {green:'text-green-400', red:'text-red-400', gray:'text-gray-500'};
+  el.className = 'text-xs mt-2 text-center ' + (colorMap[color] || 'text-gray-400');
+  el.textContent = txt;
+  setTimeout(() => el.textContent = '', 5000);
+}
+
+// ── SSE logs ───────────────────────────────────────────────────────────────────
+function startSSE() {
+  if (sseSource) sseSource.close();
+  sseSource = new EventSource('/api/logs/stream');
+  sseSource.onmessage = e => {
+    const entry = JSON.parse(e.data);
+    appendLog(entry);
+  };
+  sseSource.onerror = () => {
+    // auto-reconnect handled by browser
+  };
+}
+
+function appendLog(entry) {
+  if (logPaused) return;
+  const win = document.getElementById('logWindow');
+  const cls = 'log-' + entry.level;
+  const line = document.createElement('div');
+  line.className = cls;
+  line.innerHTML =
+    `<span class="text-gray-600 select-none">${entry.ts}</span> ` +
+    `<span class="text-gray-500 select-none">[${entry.name}]</span> ` +
+    escapeHtml(entry.msg);
+  win.appendChild(line);
+  win.scrollTop = win.scrollHeight;
+
+  // Keep max 300 DOM lines
+  while (win.children.length > 300) win.removeChild(win.firstChild);
+}
+
+function clearLogs() {
+  document.getElementById('logWindow').innerHTML = '';
+}
+
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ── Trade table ────────────────────────────────────────────────────────────────
+async function loadTrades() {
+  const res = await fetch('/api/trades');
+  allTrades = await res.json();
+  renderTrades();
+}
+
+function renderTrades() {
+  const modeF   = document.getElementById('filterMode').value;
+  const resultF = document.getElementById('filterResult').value;
+
+  let rows = allTrades.filter(t => {
+    if (modeF   && t.mode   !== modeF)   return false;
+    if (resultF && t.status !== resultF) return false;
+    return true;
+  });
+
+  const tbody = document.getElementById('tradesBody');
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="11" class="text-center text-gray-500 py-8">Sin ejecuciones que coincidan</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = rows.map(t => {
+    const dir   = t.direction === 'long'
+      ? '<span class="text-green-400">▲ Long</span>'
+      : '<span class="text-red-400">▼ Short</span>';
+    const badge = `<span class="badge-${t.status} px-2 py-0.5 rounded-full text-xs font-semibold">${labelStatus(t.status)}</span>`;
+    const pnl   = t.pnl_usd != null
+      ? `<span class="${t.pnl_usd >= 0 ? 'text-green-400' : 'text-red-400'} font-mono">${t.pnl_usd >= 0 ? '+' : ''}$${t.pnl_usd.toFixed(2)}</span>`
+      : '—';
+    const date  = t.timestamp ? t.timestamp.slice(0,16).replace('T',' ') : '—';
+    return `<tr>
+      <td class="text-gray-600">${t.id}</td>
+      <td class="font-mono text-xs">${date}</td>
+      <td><span class="uppercase text-xs">${t.mode}</span></td>
+      <td class="font-mono">${t.symbol}</td>
+      <td>${dir}</td>
+      <td class="font-mono">${fmt(t.entry)}</td>
+      <td class="font-mono text-red-400">${fmt(t.sl)}</td>
+      <td class="font-mono text-green-400">${fmt(t.tp)}</td>
+      <td class="text-center">${t.contracts ?? '—'}</td>
+      <td>${badge}</td>
+      <td>${pnl}</td>
+    </tr>`;
+  }).join('');
+}
+
+function fmt(v) { return v != null ? Number(v).toLocaleString('en-US',{minimumFractionDigits:2}) : '—'; }
+function labelStatus(s) {
+  return {tp_hit:'TP ✓', sl_hit:'SL ✗', open:'Abierto', closed:'Cerrado'}[s] || s;
+}
+
+// ── Stats + Charts ────────────────────────────────────────────────────────────
+async function loadStats() {
+  const res  = await fetch('/api/stats');
+  const data = await res.json();
+
+  // Stat cards
+  document.getElementById('stTotal').textContent = data.total ?? '—';
+
+  const wr = document.getElementById('stWinRate');
+  wr.textContent = data.win_rate != null ? data.win_rate + '%' : '—';
+  wr.className = 'stat-num ' + (data.win_rate >= 50 ? 'stat-pos' : 'stat-neg');
+
+  const pnl = document.getElementById('stPnl');
+  pnl.textContent = data.total_pnl != null
+    ? (data.total_pnl >= 0 ? '+' : '') + '$' + data.total_pnl.toFixed(2) : '—';
+  pnl.className = 'stat-num ' + (data.total_pnl >= 0 ? 'stat-pos' : 'stat-neg');
+
+  document.getElementById('stBestWorst').innerHTML =
+    `<span class="text-green-400">+$${(data.best_trade||0).toFixed(0)}</span>` +
+    `<span class="text-gray-600"> / </span>` +
+    `<span class="text-red-400">$${(data.worst_trade||0).toFixed(0)}</span>`;
+
+  // Chart badges
+  document.getElementById('chartWins').textContent    = data.wins    ?? 0;
+  document.getElementById('chartLosses').textContent  = data.losses  ?? 0;
+  document.getElementById('chartOpen').textContent    = data.open    ?? 0;
+
+  // Totals
+  const totalWin  = (data.wins   || 0) > 0 && data.best_trade ? data.total_pnl + Math.abs(data.worst_trade||0) : 0;
+  const totalLoss = Math.abs(data.worst_trade || 0);
+  document.getElementById('chartTotalWin').textContent  = '+$' + (data.total_pnl > 0 ? data.total_pnl : 0).toFixed(2);
+  document.getElementById('chartTotalLoss').textContent = '-$' + Math.abs(data.total_pnl < 0 ? data.total_pnl : 0).toFixed(2);
+  const net = document.getElementById('chartNet');
+  net.textContent = (data.total_pnl >= 0 ? '+' : '') + '$' + (data.total_pnl||0).toFixed(2);
+  net.className   = 'font-mono font-bold ' + (data.total_pnl >= 0 ? 'text-green-400' : 'text-red-400');
+
+  // Equity curve
+  buildEquityChart(data.daily_pnl || []);
+
+  // Donut
+  buildDonutChart(data.wins || 0, data.losses || 0, data.open || 0);
+}
+
+function buildEquityChart(daily) {
+  const labels  = daily.map(d => d.day);
+  let cumulative = 0;
+  const values  = daily.map(d => { cumulative += d.day_pnl; return +cumulative.toFixed(2); });
+
+  const ctx = document.getElementById('equityChart').getContext('2d');
+  if (equityChart) equityChart.destroy();
+
+  equityChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [{
+        label: 'Equity (USD)',
+        data: values,
+        borderColor: values.length && values[values.length-1] >= 0 ? '#3fb950' : '#f85149',
+        backgroundColor: 'rgba(63,185,80,0.07)',
+        borderWidth: 2,
+        tension: 0.3,
+        pointRadius: values.length > 30 ? 0 : 4,
+        fill: true,
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: {
+        x: { ticks:{color:'#8b949e',font:{size:10}}, grid:{color:'#21262d'} },
+        y: { ticks:{color:'#8b949e',font:{size:10}}, grid:{color:'#21262d'} },
+      },
+      plugins: { legend:{display:false} },
+    },
+  });
+}
+
+function buildDonutChart(wins, losses, open) {
+  const ctx = document.getElementById('donutChart').getContext('2d');
+  if (donutChart) donutChart.destroy();
+
+  donutChart = new Chart(ctx, {
+    type: 'doughnut',
+    data: {
+      labels: ['TP Hit', 'SL Hit', 'Abiertos'],
+      datasets: [{
+        data: [wins, losses, open],
+        backgroundColor: ['#238636','#6e2230','#1f6feb'],
+        borderColor:     ['#3fb950','#f85149','#79c0ff'],
+        borderWidth: 1,
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: {
+          position: 'bottom',
+          labels: {color:'#8b949e', font:{size:11}, padding:12},
+        },
+      },
+      cutout: '65%',
+    },
+  });
+}
+
+// ── Init ───────────────────────────────────────────────────────────────────────
+async function init() {
+  // Check if bot is already running (page reload)
+  const res  = await fetch('/api/bot/status');
+  const data = await res.json();
+  if (data.running) {
+    setRunning(true);
+    startSSE();
+  }
+
+  // Load logs snapshot
+  const logs = await fetch('/api/logs').then(r => r.json());
+  logs.forEach(appendLog);
+
+  // Refresh stats every 30s
+  loadStats();
+  setInterval(loadStats, 30_000);
+}
+
+init();
+</script>
+</body>
+</html>
