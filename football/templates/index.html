@@ -1,0 +1,506 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FootballBin Predictions</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.1/dist/cdn.min.js"></script>
+  <style>
+    :root { color-scheme: dark; }
+    body { background: #0d1117; color: #e6edf3; font-family: 'Segoe UI', system-ui, sans-serif; }
+
+    ::-webkit-scrollbar { width: 5px; }
+    ::-webkit-scrollbar-track { background: #161b22; }
+    ::-webkit-scrollbar-thumb { background: #30363d; border-radius: 3px; }
+
+    .card {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 10px;
+    }
+
+    input, select {
+      background: #0d1117;
+      border: 1px solid #30363d;
+      border-radius: 6px;
+      color: #e6edf3;
+      padding: 6px 10px;
+      width: 100%;
+      font-size: 13px;
+      transition: border-color .2s;
+    }
+    input:focus, select:focus { outline: none; border-color: #388bfd; }
+
+    label { font-size: 12px; color: #8b949e; display: block; margin-bottom: 3px; }
+
+    .btn-green { background: #238636; color: #fff; border-radius: 6px; padding: 8px 18px; font-size: 13px; font-weight: 600; transition: background .2s; cursor: pointer; }
+    .btn-green:hover:not(:disabled) { background: #2ea043; }
+    .btn-green:disabled { background: #21262d; color: #484f58; cursor: not-allowed; }
+
+    .btn-ghost { background: transparent; color: #8b949e; border: 1px solid #30363d; border-radius: 6px; padding: 8px 18px; font-size: 13px; font-weight: 600; transition: all .2s; cursor: pointer; }
+    .btn-ghost:hover { border-color: #8b949e; color: #e6edf3; }
+
+    /* Status pills */
+    .pill-live     { background: #0f3a1e; color: #3fb950; border: 1px solid #238636; }
+    .pill-upcoming { background: #1a1a2e; color: #79c0ff; border: 1px solid #1f6feb; }
+    .pill-finished { background: #21262d; color: #8b949e; border: 1px solid #30363d; }
+
+    /* Score badge */
+    .score-block { background: #0d1117; border: 1px solid #21262d; border-radius: 8px; padding: 8px 14px; text-align: center; min-width: 72px; }
+
+    /* Spinner */
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .spinner { animation: spin 0.8s linear infinite; border: 2px solid #30363d; border-top-color: #388bfd; border-radius: 50%; }
+
+    /* Blink for live */
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
+    .blink { animation: blink 1.2s ease-in-out infinite; }
+
+    /* Match card hover */
+    .match-card { transition: border-color .15s; }
+    .match-card:hover { border-color: #388bfd; }
+
+    /* Corner bar */
+    .corner-bar { height: 6px; border-radius: 3px; transition: width .4s ease; }
+
+    [x-cloak] { display: none !important; }
+  </style>
+</head>
+
+<body class="min-h-screen p-4" x-data="app()" x-init="init()" x-cloak>
+
+<!-- ═══════════════════════════ HEADER ═══════════════════════════════════════ -->
+<div class="flex items-center justify-between mb-5 flex-wrap gap-3">
+  <div class="flex items-center gap-3">
+    <div class="w-10 h-10 rounded-xl bg-green-700 flex items-center justify-center text-xl select-none">⚽</div>
+    <div>
+      <h1 class="text-base font-bold leading-none">FootballBin Predictions</h1>
+      <p class="text-xs text-gray-500 mt-0.5">AI-powered match predictions · Premier League &amp; UCL</p>
+    </div>
+  </div>
+  <div class="flex items-center gap-3 text-xs text-gray-500">
+    <span x-show="lastUpdated">
+      Last updated: <span class="text-gray-300 font-mono" x-text="lastUpdated"></span>
+    </span>
+    <a href="https://apps.apple.com/app/footballbin/id6757111871"
+       target="_blank" rel="noopener"
+       class="pill-upcoming px-3 py-1 rounded-full font-semibold">
+      📱 iOS App
+    </a>
+  </div>
+</div>
+
+<!-- ═══════════════════════════ MAIN GRID ════════════════════════════════════ -->
+<div class="grid grid-cols-12 gap-4">
+
+  <!-- ── FILTER PANEL (left) ─────────────────────────────────────────────── -->
+  <div class="col-span-12 lg:col-span-3">
+    <div class="card p-4 space-y-4 lg:sticky lg:top-4">
+      <h2 class="text-xs font-semibold text-gray-400 uppercase tracking-wider">🔍 Filters</h2>
+
+      <!-- League -->
+      <div>
+        <label>League</label>
+        <select x-model="league">
+          <template x-for="l in leagues" :key="l.id">
+            <option :value="l.id" x-text="l.label"></option>
+          </template>
+        </select>
+      </div>
+
+      <!-- Matchweek -->
+      <div>
+        <label>Matchweek <span class="text-gray-600">(optional)</span></label>
+        <input type="number" x-model="matchweek" placeholder="e.g. 29" min="1" max="38"
+               @keydown.enter="search()" />
+      </div>
+
+      <!-- Home team -->
+      <div>
+        <label>Home Team <span class="text-gray-600">(optional)</span></label>
+        <input type="text" x-model="homeTeam" placeholder="e.g. Arsenal"
+               list="team-list" @keydown.enter="search()" />
+      </div>
+
+      <!-- Away team -->
+      <div>
+        <label>Away Team <span class="text-gray-600">(optional)</span></label>
+        <input type="text" x-model="awayTeam" placeholder="e.g. Chelsea"
+               list="team-list" @keydown.enter="search()" />
+        <datalist id="team-list">
+          <template x-for="t in teams" :key="t">
+            <option :value="t"></option>
+          </template>
+        </datalist>
+      </div>
+
+      <!-- Buttons -->
+      <button @click="search()" :disabled="loading || !league"
+              class="btn-green w-full flex items-center justify-center gap-2">
+        <span x-show="loading" class="spinner w-4 h-4"></span>
+        <span x-text="loading ? 'Loading...' : 'Search Predictions'"></span>
+      </button>
+
+      <button @click="clearFilters()" class="btn-ghost w-full">
+        Clear Filters
+      </button>
+
+      <!-- Aliases hint -->
+      <div class="text-xs text-gray-600 leading-relaxed border-t border-gray-800 pt-3">
+        <p class="font-semibold text-gray-500 mb-1">Team aliases:</p>
+        <p>united, city, spurs, wolves, gunners, reds, blues, villa, forest, barca, real, bayern, psg, juve, inter, bvb, atleti</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── RESULTS AREA (right) ────────────────────────────────────────────── -->
+  <div class="col-span-12 lg:col-span-9">
+
+    <!-- Meta bar -->
+    <div x-show="lastUpdated && !loading" class="flex items-center justify-between mb-4 flex-wrap gap-2">
+      <div class="text-sm text-gray-400">
+        <span class="text-gray-200 font-semibold" x-text="meta.count || 0"></span> match<span x-show="(meta.count||0) !== 1">es</span>
+        <span x-show="meta.league"> &middot; <span x-text="leagueLabel(meta.league)"></span></span>
+        <span x-show="meta.matchweek"> &middot; Matchweek <span x-text="meta.matchweek"></span></span>
+      </div>
+    </div>
+
+    <!-- Loading spinner (full area) -->
+    <div x-show="loading" class="flex flex-col items-center justify-center py-32 gap-4">
+      <div class="spinner w-10 h-10"></div>
+      <p class="text-sm text-gray-500">Fetching predictions...</p>
+    </div>
+
+    <!-- Error state -->
+    <div x-show="error && !loading" class="card p-8 text-center">
+      <p class="text-4xl mb-3">⚠️</p>
+      <p class="text-red-400 text-sm mb-4" x-text="error"></p>
+      <button @click="search()" class="btn-green">Retry</button>
+    </div>
+
+    <!-- Initial empty state -->
+    <div x-show="!loading && !error && matches.length === 0 && !lastUpdated"
+         class="card p-16 text-center">
+      <p class="text-5xl mb-4 select-none">⚽</p>
+      <p class="text-gray-400 font-semibold mb-1">Ready to predict</p>
+      <p class="text-gray-600 text-sm">Select a league and click <em>Search Predictions</em> to get started.</p>
+    </div>
+
+    <!-- No results state -->
+    <div x-show="!loading && !error && matches.length === 0 && lastUpdated"
+         class="card p-12 text-center">
+      <p class="text-4xl mb-3 select-none">🔎</p>
+      <p class="text-gray-400">No matches found for the selected filters.</p>
+    </div>
+
+    <!-- Match grid -->
+    <div x-show="!loading && matches.length > 0"
+         class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+
+      <template x-for="(match, idx) in matches" :key="idx">
+        <div class="card match-card p-4 flex flex-col gap-3">
+
+          <!-- ── Card header: teams + status ── -->
+          <div class="flex items-start justify-between gap-2">
+            <div class="flex-1 min-w-0">
+              <p class="font-semibold text-sm leading-snug truncate" x-text="match.home_team + ' vs ' + match.away_team"></p>
+              <p class="text-xs text-gray-500 mt-0.5" x-text="match.kickoff_formatted || ''"></p>
+            </div>
+            <span class="px-2 py-0.5 rounded-full text-xs font-semibold whitespace-nowrap flex-shrink-0"
+                  :class="statusClass(match.status)"
+                  x-text="match.status || 'Upcoming'">
+            </span>
+          </div>
+
+          <!-- ── Score predictions ── -->
+          <div class="flex items-center gap-2 flex-wrap">
+            <!-- Half-time -->
+            <template x-if="match.score_halftime">
+              <div class="score-block">
+                <p class="text-gray-600 uppercase" style="font-size:9px;letter-spacing:.05em;margin-bottom:2px;">HT</p>
+                <div class="flex items-center justify-center gap-1">
+                  <template x-if="parseScore(match.score_halftime)">
+                    <span>
+                      <span class="text-xl font-bold leading-none"
+                            :class="parseScore(match.score_halftime).homeColor"
+                            x-text="parseScore(match.score_halftime).home"></span>
+                      <span class="text-gray-600 mx-0.5">:</span>
+                      <span class="text-xl font-bold leading-none"
+                            :class="parseScore(match.score_halftime).awayColor"
+                            x-text="parseScore(match.score_halftime).away"></span>
+                    </span>
+                  </template>
+                  <template x-if="!parseScore(match.score_halftime)">
+                    <span class="text-sm text-gray-300" x-text="match.score_halftime"></span>
+                  </template>
+                </div>
+              </div>
+            </template>
+
+            <!-- Full-time -->
+            <template x-if="match.score_fulltime">
+              <div class="score-block">
+                <p class="text-gray-600 uppercase" style="font-size:9px;letter-spacing:.05em;margin-bottom:2px;">FT</p>
+                <div class="flex items-center justify-center gap-1">
+                  <template x-if="parseScore(match.score_fulltime)">
+                    <span>
+                      <span class="text-xl font-bold leading-none"
+                            :class="parseScore(match.score_fulltime).homeColor"
+                            x-text="parseScore(match.score_fulltime).home"></span>
+                      <span class="text-gray-600 mx-0.5">:</span>
+                      <span class="text-xl font-bold leading-none"
+                            :class="parseScore(match.score_fulltime).awayColor"
+                            x-text="parseScore(match.score_fulltime).away"></span>
+                    </span>
+                  </template>
+                  <template x-if="!parseScore(match.score_fulltime)">
+                    <span class="text-sm text-gray-300" x-text="match.score_fulltime"></span>
+                  </template>
+                </div>
+              </div>
+            </template>
+
+            <!-- Next goal -->
+            <template x-if="match.next_goal">
+              <div class="score-block flex-1">
+                <p class="text-gray-600 uppercase" style="font-size:9px;letter-spacing:.05em;margin-bottom:2px;">Next Goal</p>
+                <p class="text-sm font-semibold text-yellow-400 truncate" x-text="formatNextGoal(match.next_goal, match)"></p>
+              </div>
+            </template>
+          </div>
+
+          <!-- ── Corner stats ── -->
+          <template x-if="match.corners">
+            <div>
+              <p class="text-xs text-gray-500 mb-1.5">
+                Corners &mdash;
+                <span class="text-gray-300" x-text="cornerHome(match.corners)"></span> home /
+                <span class="text-gray-300" x-text="cornerAway(match.corners)"></span> away
+              </p>
+              <div class="flex items-center gap-1.5">
+                <span class="text-xs text-gray-500 w-5 text-right font-mono" x-text="cornerHome(match.corners)"></span>
+                <div class="flex-1 flex gap-0.5 h-2">
+                  <div class="bg-blue-500 corner-bar rounded-l"
+                       :style="`width:${cornerPct(match.corners, 'home')}%`"></div>
+                  <div class="bg-orange-500 corner-bar rounded-r"
+                       :style="`width:${cornerPct(match.corners, 'away')}%`"></div>
+                </div>
+                <span class="text-xs text-gray-500 w-5 font-mono" x-text="cornerAway(match.corners)"></span>
+              </div>
+              <div class="flex justify-between text-gray-700 mt-0.5" style="font-size:10px;">
+                <span x-text="match.home_team"></span>
+                <span x-text="match.away_team"></span>
+              </div>
+            </div>
+          </template>
+
+          <!-- ── Expandable sections ── -->
+          <div class="border-t border-gray-800 pt-2 space-y-1">
+
+            <!-- Key players toggle -->
+            <template x-if="match.key_players && match.key_players.length > 0">
+              <div>
+                <button @click="toggleSection(idx, 'players')"
+                        class="text-xs text-blue-400 hover:text-blue-300 flex items-center gap-1 w-full text-left">
+                  <span x-text="openSection(idx, 'players') ? '▲' : '▼'"></span>
+                  <span x-text="openSection(idx, 'players') ? 'Hide key players' : 'Show key players (' + match.key_players.length + ')'"></span>
+                </button>
+                <div x-show="openSection(idx, 'players')"
+                     x-transition:enter="transition ease-out duration-150"
+                     x-transition:enter-start="opacity-0 -translate-y-1"
+                     x-transition:enter-end="opacity-100 translate-y-0"
+                     class="mt-2 space-y-2">
+                  <template x-for="player in match.key_players" :key="player.player_name">
+                    <div class="flex gap-2 items-start">
+                      <span class="text-yellow-400 text-xs mt-0.5 flex-shrink-0">★</span>
+                      <div>
+                        <span class="text-xs font-semibold text-gray-200" x-text="player.player_name"></span>
+                        <p class="text-xs text-gray-500 mt-0.5" x-text="player.reason"></p>
+                      </div>
+                    </div>
+                  </template>
+                </div>
+              </div>
+            </template>
+
+            <!-- All predictions toggle -->
+            <template x-if="match.predictions && match.predictions.length > 0">
+              <div>
+                <button @click="toggleSection(idx, 'preds')"
+                        class="text-xs text-gray-500 hover:text-gray-300 flex items-center gap-1 w-full text-left">
+                  <span x-text="openSection(idx, 'preds') ? '▲' : '▼'"></span>
+                  <span x-text="openSection(idx, 'preds') ? 'Hide all predictions' : 'All predictions (' + match.predictions.length + ')'"></span>
+                </button>
+                <div x-show="openSection(idx, 'preds')"
+                     x-transition:enter="transition ease-out duration-150"
+                     x-transition:enter-start="opacity-0 -translate-y-1"
+                     x-transition:enter-end="opacity-100 translate-y-0"
+                     class="mt-2">
+                  <dl class="space-y-1.5">
+                    <template x-for="pred in match.predictions" :key="pred.type">
+                      <div class="flex justify-between items-baseline gap-2">
+                        <dt class="text-xs text-gray-500 flex-shrink-0" x-text="pred.type + ':'"></dt>
+                        <dd class="text-xs text-gray-300 font-mono text-right" x-text="pred.value"></dd>
+                      </div>
+                    </template>
+                  </dl>
+                </div>
+              </div>
+            </template>
+
+          </div>
+        </div><!-- /match card -->
+      </template>
+    </div><!-- /match grid -->
+
+  </div><!-- /results area -->
+</div><!-- /main grid -->
+
+<!-- ════════════════════════════ JAVASCRIPT ══════════════════════════════════ -->
+<script>
+function app() {
+  return {
+    // Filter state
+    league: 'premier_league',
+    matchweek: '',
+    homeTeam: '',
+    awayTeam: '',
+
+    // Data
+    leagues: [],
+    teams: [],
+    matches: [],
+    meta: {},
+
+    // UI state
+    loading: false,
+    error: null,
+    lastUpdated: null,
+    expanded: {},   // { "idx:section": true }
+
+    async init() {
+      const res = await fetch('/api/leagues');
+      const data = await res.json();
+      this.leagues = data.leagues || [];
+      this.teams   = data.teams   || [];
+    },
+
+    async search() {
+      if (!this.league || this.loading) return;
+      this.loading = true;
+      this.error   = null;
+      this.matches = [];
+      this.expanded = {};
+
+      const params = new URLSearchParams({ league: this.league });
+      if (this.matchweek) params.set('matchweek', this.matchweek);
+      if (this.homeTeam.trim()) params.set('home_team', this.homeTeam.trim());
+      if (this.awayTeam.trim()) params.set('away_team', this.awayTeam.trim());
+
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 30000);
+
+      try {
+        const res  = await fetch(`/api/predictions?${params}`, { signal: controller.signal });
+        const json = await res.json();
+        clearTimeout(timeout);
+
+        if (!json.ok) throw new Error(json.error || 'Unknown error from API');
+
+        this.matches = json.data.matches || [];
+        this.meta    = {
+          league:    json.data.league,
+          matchweek: json.data.matchweek,
+          count:     json.data.count,
+        };
+        this.lastUpdated = new Date().toLocaleTimeString();
+      } catch (e) {
+        clearTimeout(timeout);
+        if (e.name === 'AbortError') {
+          this.error = 'Request timed out after 30 seconds. Please try again.';
+        } else {
+          this.error = 'Failed to load predictions: ' + e.message;
+        }
+      } finally {
+        this.loading = false;
+      }
+    },
+
+    clearFilters() {
+      this.matchweek = '';
+      this.homeTeam  = '';
+      this.awayTeam  = '';
+      this.league    = 'premier_league';
+    },
+
+    // Section expand/collapse (key: "idx:section")
+    toggleSection(idx, section) {
+      const key = `${idx}:${section}`;
+      this.expanded[key] = !this.expanded[key];
+    },
+    openSection(idx, section) {
+      return !!this.expanded[`${idx}:${section}`];
+    },
+
+    // Score parsing: "2:1" → { home, away, homeColor, awayColor }
+    parseScore(str) {
+      if (!str || !str.includes(':')) return null;
+      const parts = str.split(':');
+      const h = parseInt(parts[0], 10);
+      const a = parseInt(parts[1], 10);
+      if (isNaN(h) || isNaN(a)) return null;
+      return {
+        home: h,
+        away: a,
+        homeColor: h > a ? 'text-green-400' : h < a ? 'text-red-400'  : 'text-gray-300',
+        awayColor: a > h ? 'text-green-400' : a < h ? 'text-red-400'  : 'text-gray-300',
+      };
+    },
+
+    // Format next goal: "Home,Salah" → "Salah (Home)"
+    formatNextGoal(val, match) {
+      if (!val) return '';
+      if (val.includes(',')) {
+        const [side, player] = val.split(',', 2).map(s => s.trim());
+        const team = side.toLowerCase() === 'home' ? match.home_team : match.away_team;
+        return player + (team ? ` (${team})` : ` (${side})`);
+      }
+      return val;
+    },
+
+    // Corner helpers
+    cornerHome(str) {
+      if (!str || !str.includes(':')) return 0;
+      return parseInt(str.split(':')[0], 10) || 0;
+    },
+    cornerAway(str) {
+      if (!str || !str.includes(':')) return 0;
+      return parseInt(str.split(':')[1], 10) || 0;
+    },
+    cornerPct(str, side) {
+      const h = this.cornerHome(str);
+      const a = this.cornerAway(str);
+      const total = h + a;
+      if (!total) return 50;
+      return side === 'home' ? (h / total) * 100 : (a / total) * 100;
+    },
+
+    // Status pill CSS class
+    statusClass(status) {
+      const s = (status || '').toLowerCase();
+      if (s.includes('live') || s.includes('progress')) return 'pill-live blink';
+      if (s.includes('finish') || s.includes('ended') || s.includes('ft')) return 'pill-finished';
+      return 'pill-upcoming';
+    },
+
+    // League label from id
+    leagueLabel(id) {
+      const l = this.leagues.find(x => x.id === id);
+      return l ? l.label : id;
+    },
+  };
+}
+</script>
+</body>
+</html>
