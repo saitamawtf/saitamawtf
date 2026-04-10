@@ -1,0 +1,464 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0
+// © saitamawtf
+//
+// ╔══════════════════════════════════════════════════════════════════════════╗
+// ║  ORB NY Session — Classic & FVG                                         ║
+// ║                                                                         ║
+// ║  Detecta el Opening Range Breakout de la sesión de Nueva York           ║
+// ║  (9:30–9:45 AM ET) y emite alertas JSON para TraderPost.                ║
+// ║                                                                         ║
+// ║  Modos:                                                                 ║
+// ║    Classic — entrada en breakout del rango; SL/TP por StdDev           ║
+// ║    FVG     — espera FVG post-breakout y entra en el retest             ║
+// ║                                                                         ║
+// ║  ⚠️  Uso recomendado: gráficos de 1m, 3m o 5m                          ║
+// ║  ⚠️  Para futuros crypto: ajusta "Valor por punto" manualmente          ║
+// ║  ⚠️  Configurar alerta TradingView como "Una vez por cierre de vela"    ║
+// ╚══════════════════════════════════════════════════════════════════════════╝
+
+//@version=5
+indicator(
+     title      = "ORB NY Session — Classic & FVG",
+     shorttitle = "ORB NY",
+     overlay    = true,
+     max_lines_count  = 500,
+     max_labels_count = 500,
+     max_boxes_count  = 100
+ )
+
+// ══════════════════════════════════════════════════════════════════════════════
+// INPUTS
+// ══════════════════════════════════════════════════════════════════════════════
+
+var GRP_SES = "⏰ Sesión NY"
+i_orb_open_h  = input.int(9,   "ORB — Apertura (hora)",        minval=0, maxval=23, inline="orb_open",  group=GRP_SES)
+i_orb_open_m  = input.int(30,  ":",                             minval=0, maxval=59, inline="orb_open",  group=GRP_SES)
+i_orb_close_h = input.int(9,   "ORB — Cierre (hora)",          minval=0, maxval=23, inline="orb_close", group=GRP_SES)
+i_orb_close_m = input.int(45,  ":",                             minval=0, maxval=59, inline="orb_close", group=GRP_SES)
+i_bad_day_h   = input.int(12,  "Límite Bad Day (hora)",        minval=0, maxval=23, inline="bad_day",   group=GRP_SES)
+i_bad_day_m   = input.int(0,   ":",                             minval=0, maxval=59, inline="bad_day",   group=GRP_SES)
+i_sess_end_h  = input.int(16,  "Cierre sesión (hora)",         minval=0, maxval=23, inline="sess_end",  group=GRP_SES)
+i_sess_end_m  = input.int(0,   ":",                             minval=0, maxval=59, inline="sess_end",  group=GRP_SES)
+
+var GRP_STR = "🎯 Estrategia"
+i_mode = input.string("Classic", "Modo", options=["Classic", "FVG"], group=GRP_STR)
+
+var GRP_CLS = "📐 Modo Classic"
+i_sl_stdev = input.float(0.5, "SL — StdDev dentro del rango", minval=0.1, maxval=3.0,  step=0.1, group=GRP_CLS,
+     tooltip="Distancia del SL medida en múltiplos del tamaño del rango ORB, desde el punto de breakout hacia adentro.")
+i_tp_stdev = input.float(2.0, "TP — StdDev fuera del rango",  minval=0.5, maxval=10.0, step=0.1, group=GRP_CLS,
+     tooltip="Distancia del TP medida en múltiplos del tamaño del rango ORB, desde el punto de breakout hacia afuera.")
+
+var GRP_FVG = "🕳️ Modo FVG"
+i_rr = input.float(2.0, "R:R Ratio", minval=0.5, maxval=10.0, step=0.5, group=GRP_FVG,
+     tooltip="Ratio riesgo:recompensa para calcular el TP en modo FVG. TP = entrada ± (entrada - SL) × R:R.")
+
+var GRP_RISK = "💰 Risk Management"
+i_risk_usd    = input.float(50.0, "Riesgo por trade (USD)",              minval=1.0,  step=5.0,  group=GRP_RISK)
+i_point_value = input.float(0.0,  "Valor por punto del contrato (0=auto)", minval=0.0, step=1.0, group=GRP_RISK,
+     tooltip="Valor en USD de 1 punto de movimiento por contrato. 0 = usar syminfo.pointvalue automático.\nEjemplos: ES=50, NQ=20, CL=1000, GC=100.\n⚠️ Para BTC/futuros crypto en Phemex: 0.001 BTC/contrato × precio_BTC.")
+i_min_qty = input.int(1,  "Contratos mínimos", minval=1, group=GRP_RISK)
+i_max_qty = input.int(10, "Contratos máximos", minval=1, group=GRP_RISK)
+
+var GRP_VIS = "🎨 Visualización"
+i_show_box    = input.bool(true,  "Mostrar caja del rango ORB",      group=GRP_VIS)
+i_show_lines  = input.bool(true,  "Mostrar líneas TP / SL / Entrada", group=GRP_VIS)
+i_show_fvg    = input.bool(true,  "Mostrar zona FVG",                 group=GRP_VIS)
+i_box_col     = input.color(color.new(color.blue,   85), "Color caja ORB",  group=GRP_VIS)
+i_long_col    = input.color(color.new(color.green,   0), "Color Long",      group=GRP_VIS)
+i_short_col   = input.color(color.new(color.red,     0), "Color Short",     group=GRP_VIS)
+i_tp_col      = input.color(color.new(color.lime,    0), "Color línea TP",  group=GRP_VIS)
+i_sl_col      = input.color(color.new(color.red,     0), "Color línea SL",  group=GRP_VIS)
+i_entry_col   = input.color(color.new(color.yellow,  0), "Color línea Entrada", group=GRP_VIS)
+i_fvg_col     = input.color(color.new(color.orange, 75), "Color zona FVG",  group=GRP_VIS)
+
+var GRP_ALT = "🔔 Alertas — TraderPost"
+i_ticker_ov   = input.string("", "Ticker override (vacío = automático)",  group=GRP_ALT,
+     tooltip="Deja vacío para usar el ticker del gráfico (syminfo.ticker). Útil para forzar 'ES1!' o 'BTC-PERP'.")
+i_alert_close = input.bool(false, "Enviar alerta de cierre al fin de sesión", group=GRP_ALT)
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+// VALIDACIÓN DE TIMEFRAME
+// ══════════════════════════════════════════════════════════════════════════════
+
+// El indicador pierde precisión en timeframes > 15m porque el rango ORB
+// quedaría definido por una sola vela o podría perderse por completo.
+_tf_minutes = timeframe.in_seconds() / 60
+if _tf_minutes > 15 and barstate.isfirst
+    runtime.error("ORB NY: este indicador requiere un timeframe ≤ 15m. Actual: " + timeframe.period + "m.")
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+// FUNCIONES AUXILIARES
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Calcula la cantidad de contratos basado en riesgo en USD y distancia al SL.
+// Usa syminfo.pointvalue si no se especifica un valor manual.
+f_contracts(float entry, float sl) =>
+    sl_dist          = math.abs(entry - sl)
+    pv               = i_point_value > 0 ? i_point_value : syminfo.pointvalue
+    risk_per_contract = sl_dist * pv
+    raw_qty          = risk_per_contract > 0 ? i_risk_usd / risk_per_contract : float(i_min_qty)
+    int(math.max(i_min_qty, math.min(i_max_qty, math.floor(raw_qty))))
+
+// Construye el mensaje JSON para TraderPost.
+// Formato: {"ticker":"ES1!","action":"buy","quantity":2,"stopLoss":4500.25,"takeProfit":4520.50}
+f_alert_json(string action, int qty, float sl_price, float tp_price) =>
+    ticker = i_ticker_ov != "" ? i_ticker_ov : syminfo.ticker
+    '{"ticker":"'    + ticker                              +
+     '","action":"'  + action                              +
+     '","quantity":' + str.tostring(qty)                   +
+     ',"stopLoss":'  + str.tostring(math.round(sl_price, 2)) +
+     ',"takeProfit":' + str.tostring(math.round(tp_price, 2)) + '}'
+
+// Construye el mensaje de cierre para TraderPost.
+f_alert_close_json() =>
+    ticker = i_ticker_ov != "" ? i_ticker_ov : syminfo.ticker
+    '{"ticker":"' + ticker + '","action":"exit"}'
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+// DETECCIÓN DE SESIÓN (zona horaria New York)
+// ══════════════════════════════════════════════════════════════════════════════
+
+ny_h = hour(time,   "America/New_York")
+ny_m = minute(time, "America/New_York")
+ny_t = ny_h * 100 + ny_m  // Formato HHMM entero, e.g. 930, 945, 1200
+
+orb_open_hhmm  = i_orb_open_h  * 100 + i_orb_open_m
+orb_close_hhmm = i_orb_close_h * 100 + i_orb_close_m
+bad_day_hhmm   = i_bad_day_h   * 100 + i_bad_day_m
+sess_end_hhmm  = i_sess_end_h  * 100 + i_sess_end_m
+
+in_orb_window = ny_t >= orb_open_hhmm  and ny_t < orb_close_hhmm
+in_session    = ny_t >= orb_open_hhmm  and ny_t < sess_end_hhmm
+at_sess_end   = ny_t >= sess_end_hhmm  and ny_t < sess_end_hhmm + 1  // primera vela del cierre
+past_bad_day  = ny_t >= bad_day_hhmm
+
+// Nuevo día de trading NY: cuando cambia el día del mes en timezone NY
+is_new_day = ta.change(dayofmonth(time, "America/New_York")) != 0
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+// VARIABLES DE ESTADO (persisten entre velas)
+// ══════════════════════════════════════════════════════════════════════════════
+
+// — Rango ORB —
+var float  orb_high         = na
+var float  orb_low          = na
+var bool   orb_defined      = false   // rango cerrado y listo
+var bool   bad_day          = false   // no hubo breakout antes del límite
+var bool   signal_sent      = false   // una sola señal por día
+
+// — Dirección del breakout (para modo FVG) —
+var bool   orb_broken_long  = false
+var bool   orb_broken_short = false
+
+// — FVG —
+var float  fvg_high         = na
+var float  fvg_low          = na
+var string fvg_dir          = na
+var float  fvg_sl           = na
+var bool   fvg_active       = false   // FVG detectado, esperando retest
+
+// — Objetos de dibujo —
+var box    orb_box          = na
+var line   tp_line          = na
+var line   sl_line          = na
+var line   entry_line       = na
+var box    fvg_box          = na
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+// RESET DIARIO
+// ══════════════════════════════════════════════════════════════════════════════
+
+if is_new_day
+    orb_high        := na
+    orb_low         := na
+    orb_defined     := false
+    bad_day         := false
+    signal_sent     := false
+    orb_broken_long  := false
+    orb_broken_short := false
+    fvg_high        := na
+    fvg_low         := na
+    fvg_dir         := na
+    fvg_sl          := na
+    fvg_active      := false
+    // No eliminamos los objetos de dibujo anteriores para mantener el historial;
+    // las referencias se sobreescriben al crear nuevos.
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+// CONSTRUCCIÓN DEL RANGO ORB
+// ══════════════════════════════════════════════════════════════════════════════
+
+if in_orb_window
+    // Acumular high/low de todas las velas dentro de la ventana
+    orb_high := na(orb_high) ? high : math.max(orb_high, high)
+    orb_low  := na(orb_low)  ? low  : math.min(orb_low, low)
+
+    // Dibujar / actualizar caja del rango
+    if i_show_box
+        if na(orb_box)
+            orb_box := box.new(
+                 left         = bar_index,
+                 top          = orb_high,
+                 right        = bar_index,
+                 bottom       = orb_low,
+                 border_color = color.blue,
+                 border_width = 1,
+                 bgcolor      = i_box_col
+             )
+        else
+            box.set_right(orb_box,  bar_index)
+            box.set_top(orb_box,    orb_high)
+            box.set_bottom(orb_box, orb_low)
+
+// El rango queda definido en la primera vela que ya no esté dentro de la ventana
+if not in_orb_window and not na(orb_high) and not orb_defined
+    orb_defined := true
+    // Extender la caja hacia la derecha para visualizar el nivel durante el día
+    if i_show_box and not na(orb_box)
+        box.set_right(orb_box, bar_index + 200)
+
+// Activar bad day si se supera el límite sin haber enviado señal
+if past_bad_day and orb_defined and not signal_sent
+    bad_day := true
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ESTRATEGIA: MODO CLASSIC
+// ══════════════════════════════════════════════════════════════════════════════
+
+if i_mode == "Classic" and orb_defined and not signal_sent and not bad_day and in_session
+    orb_size  = orb_high - orb_low
+    body_high = math.max(open, close)
+    body_low  = math.min(open, close)
+
+    // ── Long breakout: cuerpo completo sobre el techo del rango ──
+    if body_low > orb_high
+        entry = orb_high
+        sl    = orb_high - i_sl_stdev * orb_size
+        tp    = orb_high + i_tp_stdev * orb_size
+        qty   = f_contracts(entry, sl)
+
+        signal_sent := true
+
+        // Alerta JSON para TraderPost
+        alert(f_alert_json("buy", qty, sl, tp), alert.freq_once_per_bar_close)
+
+        // Líneas TP / SL / Entrada
+        if i_show_lines
+            tp_line    := line.new(bar_index, tp,    bar_index, tp,    color=i_tp_col,    width=2, extend=extend.right)
+            sl_line    := line.new(bar_index, sl,    bar_index, sl,    color=i_sl_col,    width=2, extend=extend.right)
+            entry_line := line.new(bar_index, entry, bar_index, entry, color=i_entry_col, width=1, extend=extend.right, style=line.style_dashed)
+
+        // Etiqueta con resumen del trade
+        label.new(
+             x         = bar_index,
+             y         = low,
+             text      = "▲ LONG\n" + str.tostring(qty) + " cts" +
+                         "\nEntrada: " + str.tostring(math.round(entry, 2)) +
+                         "\nTP: "      + str.tostring(math.round(tp,    2)) +
+                         "\nSL: "      + str.tostring(math.round(sl,    2)),
+             style     = label.style_label_up,
+             color     = i_long_col,
+             textcolor = color.white,
+             size      = size.small
+         )
+
+    // ── Short breakout: cuerpo completo bajo el piso del rango ──
+    else if body_high < orb_low
+        entry = orb_low
+        sl    = orb_low + i_sl_stdev * orb_size
+        tp    = orb_low - i_tp_stdev * orb_size
+        qty   = f_contracts(entry, sl)
+
+        signal_sent := true
+
+        alert(f_alert_json("sell", qty, sl, tp), alert.freq_once_per_bar_close)
+
+        if i_show_lines
+            tp_line    := line.new(bar_index, tp,    bar_index, tp,    color=i_tp_col,    width=2, extend=extend.right)
+            sl_line    := line.new(bar_index, sl,    bar_index, sl,    color=i_sl_col,    width=2, extend=extend.right)
+            entry_line := line.new(bar_index, entry, bar_index, entry, color=i_entry_col, width=1, extend=extend.right, style=line.style_dashed)
+
+        label.new(
+             x         = bar_index,
+             y         = high,
+             text      = "▼ SHORT\n" + str.tostring(qty) + " cts" +
+                         "\nEntrada: " + str.tostring(math.round(entry, 2)) +
+                         "\nTP: "      + str.tostring(math.round(tp,    2)) +
+                         "\nSL: "      + str.tostring(math.round(sl,    2)),
+             style     = label.style_label_down,
+             color     = i_short_col,
+             textcolor = color.white,
+             size      = size.small
+         )
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ESTRATEGIA: MODO FVG
+// ══════════════════════════════════════════════════════════════════════════════
+
+if i_mode == "FVG" and orb_defined and not bad_day and in_session
+
+    body_high = math.max(open, close)
+    body_low  = math.min(open, close)
+
+    // ── Fase 0: Detectar dirección del breakout ──
+    // (necesitamos saber la dirección antes de escanear FVGs)
+    if not orb_broken_long and not orb_broken_short and not signal_sent
+        if body_low > orb_high
+            orb_broken_long := true
+        else if body_high < orb_low
+            orb_broken_short := true
+
+    // ── Fase 1: Detectar FVG post-breakout ──
+    // Un FVG se forma con 3 velas consecutivas. En la vela actual (índice 0):
+    //   Alcista: low[0] > high[2]  →  gap entre high de c1 y low de c3
+    //   Bajista: high[0] < low[2]  →  gap entre low de c1 y high de c3
+    // La vela del medio (índice 1) es la "vela impulso"; su apertura es el SL.
+
+    if not fvg_active and not signal_sent
+        // FVG alcista: solo si hubo breakout largo
+        if orb_broken_long and low > high[2]
+            fvg_low    := high[2]   // piso del gap = high de c1
+            fvg_high   := low       // techo del gap = low de c3
+            fvg_dir    := "long"
+            fvg_sl     := open[1]   // apertura de la vela impulso (c2)
+            fvg_active := true
+
+            if i_show_fvg
+                fvg_box := box.new(
+                     left         = bar_index - 2,
+                     top          = fvg_high,
+                     right        = bar_index + 50,
+                     bottom       = fvg_low,
+                     bgcolor      = i_fvg_col,
+                     border_color = color.orange,
+                     border_width = 1
+                 )
+
+        // FVG bajista: solo si hubo breakout corto
+        else if orb_broken_short and high < low[2]
+            fvg_high   := low[2]    // techo del gap = low de c1
+            fvg_low    := high      // piso del gap = high de c3
+            fvg_dir    := "short"
+            fvg_sl     := open[1]   // apertura de la vela impulso (c2)
+            fvg_active := true
+
+            if i_show_fvg
+                fvg_box := box.new(
+                     left         = bar_index - 2,
+                     top          = fvg_high,
+                     right        = bar_index + 50,
+                     bottom       = fvg_low,
+                     bgcolor      = i_fvg_col,
+                     border_color = color.orange,
+                     border_width = 1
+                 )
+
+    // ── Fase 2: Detectar retest del FVG ──
+    // El precio entra en la zona del gap → señal de entrada
+    if fvg_active and not signal_sent
+        in_fvg_zone = close >= fvg_low and close <= fvg_high
+
+        if in_fvg_zone
+            entry   = fvg_dir == "long" ? fvg_high : fvg_low
+            sl      = fvg_sl
+            sl_dist = math.abs(entry - sl)
+            tp      = fvg_dir == "long" ? entry + sl_dist * i_rr : entry - sl_dist * i_rr
+            qty     = f_contracts(entry, sl)
+            action  = fvg_dir == "long" ? "buy" : "sell"
+
+            signal_sent := true
+            fvg_active  := false
+
+            // Cerrar caja del FVG en la vela actual
+            if i_show_fvg and not na(fvg_box)
+                box.set_right(fvg_box, bar_index)
+
+            alert(f_alert_json(action, qty, sl, tp), alert.freq_once_per_bar_close)
+
+            if i_show_lines
+                tp_line    := line.new(bar_index, tp,    bar_index, tp,    color=i_tp_col,    width=2, extend=extend.right)
+                sl_line    := line.new(bar_index, sl,    bar_index, sl,    color=i_sl_col,    width=2, extend=extend.right)
+                entry_line := line.new(bar_index, entry, bar_index, entry, color=i_entry_col, width=1, extend=extend.right, style=line.style_dashed)
+
+            lbl_text  = (fvg_dir == "long" ? "▲ LONG FVG" : "▼ SHORT FVG") +
+                        "\n" + str.tostring(qty) + " cts" +
+                        "\nEntrada: " + str.tostring(math.round(entry, 2)) +
+                        "\nTP: "      + str.tostring(math.round(tp,    2)) +
+                        "\nSL: "      + str.tostring(math.round(sl,    2))
+            lbl_y     = fvg_dir == "long" ? low  : high
+            lbl_style = fvg_dir == "long" ? label.style_label_up : label.style_label_down
+            lbl_col   = fvg_dir == "long" ? i_long_col : i_short_col
+
+            label.new(
+                 x         = bar_index,
+                 y         = lbl_y,
+                 text      = lbl_text,
+                 style     = lbl_style,
+                 color     = lbl_col,
+                 textcolor = color.white,
+                 size      = size.small
+             )
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ALERTA DE CIERRE AL FINAL DE SESIÓN
+// ══════════════════════════════════════════════════════════════════════════════
+
+if i_alert_close and signal_sent and at_sess_end
+    alert(f_alert_close_json(), alert.freq_once_per_bar_close)
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+// FONDOS DE COLOR
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Tinte azul durante la ventana de formación del rango ORB
+bgcolor(in_orb_window                        ? color.new(color.blue, 88) : na, title="Ventana ORB")
+// Tinte gris cuando el día ya está descartado (bad day)
+bgcolor(bad_day and in_session               ? color.new(color.gray, 92) : na, title="Bad Day")
+// Tinte verde/rojo tenue cuando hay un trade activo
+bgcolor(signal_sent and orb_broken_long  and in_session ? color.new(color.green, 96) : na, title="Trade Long activo")
+bgcolor(signal_sent and orb_broken_short and in_session ? color.new(color.red,   96) : na, title="Trade Short activo")
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+// PLOTS DE REFERENCIA (niveles ORB visibles en la leyenda)
+// ══════════════════════════════════════════════════════════════════════════════
+
+plot(orb_defined ? orb_high : na, title="ORB High", color=color.new(color.blue, 60), linewidth=1, style=plot.style_linebr)
+plot(orb_defined ? orb_low  : na, title="ORB Low",  color=color.new(color.blue, 60), linewidth=1, style=plot.style_linebr)
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+// NOTAS DE CONFIGURACIÓN DE ALERTAS EN TRADINGVIEW
+// ══════════════════════════════════════════════════════════════════════════════
+//
+//  1. Añadir el indicador al gráfico (timeframe ≤ 15m, futuros activos).
+//
+//  2. Crear alerta:
+//     · Condición : "ORB NY Session — Classic & FVG" → "alert() function calls"
+//     · Frecuencia: "Una vez por cierre de vela" (Once Per Bar Close)
+//     · Webhook URL: https://app.traderpost.io/api/v1/webhook/<TOKEN>
+//     · Mensaje    : dejar en blanco (el indicador construye el JSON completo)
+//
+//  3. Formato del JSON enviado:
+//     {"ticker":"ES1!","action":"buy","quantity":2,"stopLoss":4500.25,"takeProfit":4520.50}
+//
+//  4. Para cierre automático al final de sesión, activar
+//     "Enviar alerta de cierre al fin de sesión" en los parámetros.
+//
+//  5. Valor por punto de contratos comunes:
+//     ES (E-mini S&P 500) = 50      NQ (E-mini Nasdaq) = 20
+//     RTY (E-mini Russell) = 50     YM (E-mini Dow)    = 5
+//     CL (Crude Oil)       = 1000   GC (Gold)          = 100
+//     SI (Silver)          = 5000   BTC (CME Micro)    = 25
+//     ⚠️  Crypto perps en Phemex/Bybit: ajustar según contrato.
