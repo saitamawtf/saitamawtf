@@ -5,6 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>FootballBin Predictions</title>
   <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.1/dist/cdn.min.js"></script>
   <style>
     :root { color-scheme: dark; }
@@ -164,6 +166,14 @@
         <span x-show="meta.league"> &middot; <span x-text="leagueLabel(meta.league)"></span></span>
         <span x-show="meta.matchweek"> &middot; Matchweek <span x-text="meta.matchweek"></span></span>
       </div>
+      <button x-show="matches.length > 0"
+              @click="exportPDF()"
+              :disabled="exportingPdf"
+              class="btn-green flex items-center gap-2 text-xs px-3 py-1.5">
+        <span x-show="exportingPdf" class="spinner w-3 h-3"></span>
+        <span x-show="!exportingPdf">📄</span>
+        <span x-text="exportingPdf ? 'Generating...' : 'Export PDF'"></span>
+      </button>
     </div>
 
     <!-- Loading spinner (full area) -->
@@ -375,6 +385,7 @@ function app() {
 
     // UI state
     loading: false,
+    exportingPdf: false,
     error: null,
     lastUpdated: null,
     expanded: {},   // { "idx:section": true }
@@ -498,6 +509,200 @@ function app() {
     leagueLabel(id) {
       const l = this.leagues.find(x => x.id === id);
       return l ? l.label : id;
+    },
+
+    // ── PDF Export ─────────────────────────────────────────────────────────────
+    exportPDF() {
+      if (!this.matches.length || this.exportingPdf) return;
+      this.exportingPdf = true;
+
+      setTimeout(() => {
+        try {
+          const { jsPDF } = window.jspdf;
+          const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+
+          const PW = doc.internal.pageSize.getWidth();
+          const PH = doc.internal.pageSize.getHeight();
+          const M  = 14;
+          const CW = PW - M * 2;
+
+          // Palette
+          const G   = { r:21,  g:128, b:61  };   // green
+          const GL  = { r:240, g:253, b:244 };   // light green bg
+          const AMB = { r:146, g:86,  b:5   };   // amber
+          const AMBL= { r:255, g:251, b:235 };   // light amber
+          const BL  = { r:29,  g:78,  b:216 };   // blue
+          const DK  = { r:15,  g:23,  b:42  };   // near-black
+          const GR  = { r:100, g:116, b:139 };   // slate gray
+          const LG  = { r:241, g:245, b:249 };   // light gray bg
+          const RED = { r:185, g:28,  b:28  };
+
+          const rgb  = c => [c.r, c.g, c.b];
+          const fill = c => doc.setFillColor(c.r, c.g, c.b);
+          const text = c => doc.setTextColor(c.r, c.g, c.b);
+
+          let y = M;
+
+          const addTopBar = () => {
+            fill(G); doc.rect(0, 0, PW, 2.5, 'F');
+          };
+
+          const addFooter = () => {
+            const pg    = doc.internal.getCurrentPageInfo().pageNumber;
+            const total = doc.internal.getNumberOfPages();
+            doc.setFontSize(7); text(GR);
+            doc.text('FootballBin Predictions  |  footballbin.app', M, PH - 7);
+            doc.text(`Page ${pg} / ${total}`, PW - M, PH - 7, { align: 'right' });
+            doc.setDrawColor(226, 232, 240); doc.setLineWidth(0.2);
+            doc.line(M, PH - 10, PW - M, PH - 10);
+          };
+
+          const checkY = (need = 15) => {
+            if (y + need > PH - 16) {
+              addFooter();
+              doc.addPage();
+              addTopBar();
+              y = M + 4;
+            }
+          };
+
+          // ── COVER BANNER ──────────────────────────────────────────────────────
+          addTopBar();
+
+          fill(G);
+          doc.roundedRect(M, M + 3, CW, 30, 3, 3, 'F');
+
+          doc.setFontSize(18); doc.setFont('helvetica', 'bold');
+          doc.setTextColor(255, 255, 255);
+          doc.text('FootballBin Predictions', M + 6, M + 17);
+
+          doc.setFontSize(9.5); doc.setFont('helvetica', 'normal');
+          doc.setTextColor(187, 247, 208);
+          const leagueLbl = this.leagueLabel(this.meta.league || this.league);
+          const mwLbl     = this.meta.matchweek ? `  \u00B7  Matchweek ${this.meta.matchweek}` : '';
+          const dateLbl   = new Date().toLocaleDateString('en-GB', { day:'numeric', month:'long', year:'numeric' });
+          doc.text(`${leagueLbl}${mwLbl}  \u00B7  ${dateLbl}`, M + 6, M + 26);
+
+          doc.setFontSize(8); doc.setTextColor(134, 239, 172);
+          doc.text(`${this.matches.length} match${this.matches.length !== 1 ? 'es' : ''} found`, M + 6, M + 33);
+
+          y = M + 3 + 30 + 10;
+
+          // ── MATCHES ────────────────────────────────────────────────────────────
+          this.matches.forEach((match, idx) => {
+            checkY(55);
+
+            // Match header
+            fill(DK);
+            doc.roundedRect(M, y, CW, 17, 2, 2, 'F');
+
+            doc.setFontSize(11); doc.setFont('helvetica', 'bold');
+            doc.setTextColor(255, 255, 255);
+            doc.text(`${match.home_team}  vs  ${match.away_team}`, M + 5, y + 8);
+
+            // Status badge
+            const status  = (match.status || 'Upcoming').toString();
+            const badgeW  = doc.getStringUnitWidth(status) * 7 / doc.internal.scaleFactor + 6;
+            const isLive  = status.toLowerCase().includes('live');
+            fill(isLive ? G : BL);
+            doc.roundedRect(PW - M - badgeW, y + 3, badgeW, 7, 1, 1, 'F');
+            doc.setFontSize(7); doc.setFont('helvetica', 'bold');
+            doc.setTextColor(255, 255, 255);
+            doc.text(status, PW - M - badgeW / 2, y + 8, { align: 'center' });
+
+            // Kickoff
+            doc.setFontSize(8); doc.setFont('helvetica', 'normal'); text(GR);
+            doc.text(match.kickoff_formatted || '', M + 5, y + 14);
+            y += 21;
+
+            // Score summary boxes
+            const scoreItems = [
+              { label: 'Half-Time',  val: match.score_halftime },
+              { label: 'Full-Time',  val: match.score_fulltime },
+              { label: 'Next Goal',  val: match.next_goal ? this.formatNextGoal(match.next_goal, match) : null },
+              { label: 'Corners',    val: match.corners },
+            ].filter(s => s.val);
+
+            if (scoreItems.length) {
+              checkY(20);
+              const bw = CW / scoreItems.length;
+              scoreItems.forEach((s, i) => {
+                const bx = M + i * bw;
+                fill(LG); doc.roundedRect(bx, y, bw - 1.5, 17, 1.5, 1.5, 'F');
+                doc.setFontSize(6.5); doc.setFont('helvetica', 'normal'); text(GR);
+                doc.text(s.label, bx + (bw - 1.5) / 2, y + 5.5, { align: 'center' });
+                doc.setFontSize(10); doc.setFont('helvetica', 'bold'); text(DK);
+                const v = String(s.val).substring(0, 20);
+                doc.text(v, bx + (bw - 1.5) / 2, y + 13, { align: 'center' });
+              });
+              y += 21;
+            }
+
+            // Predictions table
+            if (match.predictions && match.predictions.length) {
+              checkY(28);
+              doc.setFontSize(7.5); doc.setFont('helvetica', 'bold');
+              doc.setTextColor(G.r, G.g, G.b);
+              doc.text('PREDICTIONS', M, y + 4); y += 7;
+
+              doc.autoTable({
+                startY: y,
+                margin: { left: M, right: M },
+                head: [['Prediction Type', 'Value']],
+                body: match.predictions.map(p => [p.type, String(p.value)]),
+                styles:       { fontSize: 8, cellPadding: 2.5, textColor: rgb(DK), lineColor: [226,232,240], lineWidth: 0.15 },
+                headStyles:   { fillColor: rgb(G), textColor: [255,255,255], fontStyle: 'bold', fontSize: 8 },
+                alternateRowStyles: { fillColor: rgb(GL) },
+                columnStyles: { 0: { cellWidth: 95 }, 1: { fontStyle: 'bold' } },
+                tableWidth: CW,
+              });
+              y = doc.lastAutoTable.finalY + 5;
+            }
+
+            // Key players table
+            if (match.key_players && match.key_players.length) {
+              checkY(28);
+              doc.setFontSize(7.5); doc.setFont('helvetica', 'bold');
+              doc.setTextColor(AMB.r, AMB.g, AMB.b);
+              doc.text('KEY PLAYERS', M, y + 4); y += 7;
+
+              doc.autoTable({
+                startY: y,
+                margin: { left: M, right: M },
+                head: [['Player', 'Analysis']],
+                body: match.key_players.map(p => [p.player_name, p.reason || '']),
+                styles:       { fontSize: 8, cellPadding: 2.5, textColor: rgb(DK), lineColor: [226,232,240], lineWidth: 0.15 },
+                headStyles:   { fillColor: rgb(AMB), textColor: [255,255,255], fontStyle: 'bold', fontSize: 8 },
+                alternateRowStyles: { fillColor: rgb(AMBL) },
+                columnStyles: { 0: { cellWidth: 42, fontStyle: 'bold' }, 1: {} },
+                tableWidth: CW,
+              });
+              y = doc.lastAutoTable.finalY + 5;
+            }
+
+            // Divider between matches
+            if (idx < this.matches.length - 1) {
+              checkY(8);
+              doc.setDrawColor(203, 213, 225); doc.setLineWidth(0.25);
+              doc.line(M, y + 2, PW - M, y + 2);
+              y += 8;
+            }
+          });
+
+          // Footers on all pages
+          const np = doc.internal.getNumberOfPages();
+          for (let i = 1; i <= np; i++) { doc.setPage(i); addFooter(); }
+
+          // Save
+          const lg   = (this.meta.league || this.league).replace(/\s+/g, '_');
+          const mw   = this.meta.matchweek ? `_mw${this.meta.matchweek}` : '';
+          const date = new Date().toISOString().slice(0, 10);
+          doc.save(`footballbin_${lg}${mw}_${date}.pdf`);
+
+        } finally {
+          this.exportingPdf = false;
+        }
+      }, 50);  // small delay so Alpine can render the "Generating..." state
     },
   };
 }
