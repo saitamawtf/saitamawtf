@@ -26,3 +26,6 @@ logs/
 .vscode/
 .idea/
 *.swp
+
+# Base de datos SQLite (creada en runtime)
+dashboard/trades.db
