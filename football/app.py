@@ -23,10 +23,6 @@ _mcp: MCPClient | None = None
 LEAGUES = [
     {"id": "premier_league", "label": "Premier League"},
     {"id": "champions_league", "label": "Champions League"},
-    {"id": "la_liga", "label": "La Liga"},
-    {"id": "bundesliga", "label": "Bundesliga"},
-    {"id": "serie_a", "label": "Serie A"},
-    {"id": "ligue_1", "label": "Ligue 1"},
 ]
 
 TEAM_ALIASES = [

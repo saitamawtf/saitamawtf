@@ -50,14 +50,23 @@ class MCPClient:
             raise MCPError(msg)
 
         structured = result.get("structuredContent")
-        if structured is None:
-            # Fall back to parsing text content
-            content = result.get("content", [])
-            if content:
-                raise MCPError(content[0].get("text", "No structured content returned"))
-            raise MCPError("No structured content returned")
+        if structured is not None:
+            return structured
 
-        return structured
+        # Some responses embed JSON inside a text content block
+        content = result.get("content", [])
+        if content:
+            text = content[0].get("text", "")
+            import json as _json
+            try:
+                parsed = _json.loads(text)
+                if isinstance(parsed, dict):
+                    return parsed
+            except Exception:
+                pass
+            raise MCPError(text or "No structured content returned")
+
+        raise MCPError("Empty response from FootballBin API")
 
     async def list_tools(self) -> list:
         payload = {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
