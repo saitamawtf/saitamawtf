@@ -1,0 +1,5 @@
+discord.py>=2.3.2
+python-telegram-bot>=21.0.1
+thefuzz>=0.22.1
+python-Levenshtein>=0.25.1
+python-dotenv>=1.0.1

@@ -1,0 +1,8 @@
+services:
+  betting-bot:
+    build: .
+    env_file: .env
+    restart: unless-stopped
+    volumes:
+      # Persist logs outside the container
+      - ./logs:/app/logs
