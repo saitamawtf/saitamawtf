@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Stock Insights — META & NVDA</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+  :root { color-scheme: dark; }
+  body { background:#0a0e14; color:#e6edf3; font-family:'Inter','Segoe UI',system-ui,sans-serif; }
+  ::-webkit-scrollbar { width:6px; height:6px; }
+  ::-webkit-scrollbar-track { background:#0a0e14; }
+  ::-webkit-scrollbar-thumb { background:#30363d; border-radius:3px; }
+  .card { background:linear-gradient(180deg,#161b22 0%,#11161d 100%); border:1px solid #30363d; border-radius:12px; }
+  .metric-tile { background:#0d1117; border:1px solid #21262d; border-radius:8px; padding:10px 12px; }
+  .pill { padding:3px 10px; border-radius:999px; font-size:11px; font-weight:600; letter-spacing:.04em; }
+  .rec-COMPRAR { background:linear-gradient(135deg,#0f3a1e,#1a5e30); color:#3fb950; border:1px solid #238636; }
+  .rec-MANTENER { background:linear-gradient(135deg,#3a2e0f,#5e4d1a); color:#e3b341; border:1px solid #9e7c1f; }
+  .rec-VENDER { background:linear-gradient(135deg,#3a0f1f,#5e1a30); color:#f85149; border:1px solid #b62324; }
+  .pos { color:#3fb950; }
+  .neg { color:#f85149; }
+  .neu { color:#79c0ff; }
+  .sentiment-bar { height:8px; border-radius:4px; background:#21262d; overflow:hidden; position:relative; }
+  .sentiment-fill { height:100%; transition:width .8s cubic-bezier(.4,0,.2,1); border-radius:4px; }
+  .news-item { transition:background .2s; padding:10px 12px; border-radius:6px; border-left:2px solid transparent; }
+  .news-item:hover { background:#0d1117; border-left-color:#388bfd; }
+  .news-link { color:#e6edf3; text-decoration:none; }
+  .news-link:hover { color:#79c0ff; }
+  .ticker-badge { padding:4px 10px; border-radius:6px; font-weight:700; font-size:12px; letter-spacing:.05em; }
+  .glow-green { box-shadow:0 0 18px rgba(63,185,80,.18); }
+  .glow-red   { box-shadow:0 0 18px rgba(248,81,73,.18); }
+  .skeleton { background:linear-gradient(90deg,#161b22,#21262d,#161b22); background-size:200% 100%; animation:sk 1.4s infinite; border-radius:6px; }
+  @keyframes sk { 0%{background-position:200% 0} 100%{background-position:-200% 0} }
+  .range-bar { height:6px; background:linear-gradient(90deg,#f85149 0%,#e3b341 50%,#3fb950 100%); border-radius:3px; position:relative; }
+  .range-marker { position:absolute; top:-4px; width:2px; height:14px; background:#fff; border-radius:1px; box-shadow:0 0 4px rgba(255,255,255,.6); transform:translateX(-50%); }
+  .trend-icon::before { content:"→"; color:#79c0ff; margin-right:8px; font-weight:700; }
+  .risk-icon::before { content:"⚠"; color:#e3b341; margin-right:8px; }
+  .summary-box { background:linear-gradient(135deg,rgba(56,139,253,.08),rgba(63,185,80,.04)); border:1px solid #1f6feb; border-radius:12px; }
+  .pulse-dot { width:8px; height:8px; border-radius:50%; background:#3fb950; box-shadow:0 0 0 0 rgba(63,185,80,.7); animation:pulse 2s infinite; display:inline-block; }
+  @keyframes pulse { 0%{box-shadow:0 0 0 0 rgba(63,185,80,.7)} 70%{box-shadow:0 0 0 8px rgba(63,185,80,0)} 100%{box-shadow:0 0 0 0 rgba(63,185,80,0)} }
+  .btn-refresh { background:#21262d; border:1px solid #30363d; color:#e6edf3; padding:7px 14px; border-radius:6px; font-size:12px; font-weight:500; transition:all .2s; }
+  .btn-refresh:hover { background:#30363d; border-color:#388bfd; }
+  .btn-refresh:disabled { opacity:.5; cursor:not-allowed; }
+</style>
+</head>
+<body class="min-h-screen">
+
+<div class="max-w-7xl mx-auto px-6 py-6">
+
+  <!-- Header -->
+  <header class="flex items-center justify-between mb-6 pb-4 border-b border-gray-800">
+    <div>
+      <div class="flex items-center gap-3">
+        <span class="pulse-dot"></span>
+        <h1 class="text-2xl font-bold tracking-tight">Stock Insights Dashboard</h1>
+      </div>
+      <p class="text-sm text-gray-400 mt-1">META &middot; NVDA &middot; análisis impulsado por IA</p>
+    </div>
+    <div class="text-right">
+      <div id="lastUpdate" class="text-xs text-gray-400">Cargando...</div>
+      <div id="nextRefresh" class="text-xs text-gray-500 mt-1"></div>
+      <button id="refreshBtn" class="btn-refresh mt-2" onclick="manualRefresh()">↻ Actualizar</button>
+    </div>
+  </header>
+
+  <!-- Estado de carga -->
+  <div id="loadingState" class="text-center py-20">
+    <div class="inline-block w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+    <p class="text-gray-400 mt-4">Obteniendo datos de mercado y generando análisis...</p>
+  </div>
+
+  <div id="errorState" class="hidden card p-6 text-center">
+    <p class="text-red-400 text-lg" id="errorMessage">Error cargando datos</p>
+    <button class="btn-refresh mt-4" onclick="loadData()">Reintentar</button>
+  </div>
+
+  <!-- Resumen diario -->
+  <div id="summarySection" class="hidden summary-box p-5 mb-6">
+    <div class="flex items-center gap-2 mb-2">
+      <span class="text-xs font-semibold text-blue-400 tracking-wider uppercase">📊 Resumen Ejecutivo Diario</span>
+    </div>
+    <p id="dailySummary" class="text-sm text-gray-200 leading-relaxed"></p>
+  </div>
+
+  <!-- Grid de stocks -->
+  <div id="stockGrid" class="hidden grid grid-cols-1 lg:grid-cols-2 gap-6">
+    <!-- Las tarjetas se inyectan dinámicamente -->
+  </div>
+
+  <footer class="mt-8 pt-4 border-t border-gray-800 text-center text-xs text-gray-500">
+    <p>Datos: Yahoo Finance &middot; Análisis IA: Claude Sonnet 4.6 &middot; Actualización automática: 9:00 AM PDT</p>
+    <p class="mt-1">⚠ Solo para fines informativos. No constituye asesoramiento financiero.</p>
+  </footer>
+</div>
+
+<script>
+const charts = {};
+let nextRefreshTimer = null;
+
+const fmt = {
+  num: (n, d=2) => n==null||isNaN(n) ? 'N/A' : Number(n).toLocaleString('en-US',{minimumFractionDigits:d,maximumFractionDigits:d}),
+  big: (n) => {
+    if (n==null||isNaN(n)) return 'N/A';
+    if (n>=1e12) return (n/1e12).toFixed(2)+'T';
+    if (n>=1e9)  return (n/1e9).toFixed(2)+'B';
+    if (n>=1e6)  return (n/1e6).toFixed(2)+'M';
+    if (n>=1e3)  return (n/1e3).toFixed(2)+'K';
+    return String(n);
+  },
+  pct: (n) => n==null ? 'N/A' : (n>=0?'+':'')+Number(n).toFixed(2)+'%',
+};
+
+function sentimentColor(score) {
+  if (score >= 7) return '#3fb950';
+  if (score >= 5) return '#79c0ff';
+  if (score >= 3) return '#e3b341';
+  return '#f85149';
+}
+
+function rangePct(price, lo, hi) {
+  if (!price || !lo || !hi || hi <= lo) return 50;
+  return Math.max(0, Math.min(100, ((price - lo) / (hi - lo)) * 100));
+}
+
+function buildStockCard(ticker, data) {
+  const p = data.price || {};
+  const a = data.analyst || {};
+  const i = data.insight || {};
+  const news = data.news || [];
+
+  const changeClass = p.change_pct >= 0 ? 'pos' : 'neg';
+  const arrow = p.change_pct >= 0 ? '▲' : '▼';
+  const rec = i.recommendation || 'MANTENER';
+  const sentScore = i.sentiment_score || 5;
+  const sentPct = (sentScore / 10) * 100;
+  const sentColor = sentimentColor(sentScore);
+  const rangePos = rangePct(p.price, p.week52_low, p.week52_high);
+
+  const targetUpside = (a.target_mean && p.price)
+    ? ((a.target_mean - p.price) / p.price * 100) : null;
+
+  const trends = (i.key_trends || []).slice(0, 3);
+  const risks = (i.risk_factors || []).slice(0, 2);
+
+  const trendsHtml = trends.length
+    ? trends.map(t => `<li class="trend-icon text-sm text-gray-300 mb-2">${escapeHtml(t)}</li>`).join('')
+    : '<li class="text-sm text-gray-500">Sin tendencias disponibles</li>';
+
+  const risksHtml = risks.length
+    ? risks.map(r => `<li class="risk-icon text-sm text-gray-300 mb-2">${escapeHtml(r)}</li>`).join('')
+    : '<li class="text-sm text-gray-500">Sin riesgos identificados</li>';
+
+  const newsHtml = news.length
+    ? news.slice(0, 6).map(n => `
+      <a href="${escapeAttr(n.link || '#')}" target="_blank" rel="noopener" class="news-link block">
+        <div class="news-item">
+          <div class="text-sm font-medium leading-snug">${escapeHtml(n.title)}</div>
+          <div class="text-xs text-gray-500 mt-1 flex justify-between">
+            <span>${escapeHtml(n.source || '')}</span>
+            <span>${escapeHtml(n.published || '')}</span>
+          </div>
+        </div>
+      </a>`).join('')
+    : '<p class="text-sm text-gray-500 p-3">No hay noticias disponibles.</p>';
+
+  const tickerColor = ticker === 'META' ? 'bg-blue-900 text-blue-300' : 'bg-green-900 text-green-300';
+
+  return `
+    <div class="card p-5">
+      <!-- Encabezado del ticker -->
+      <div class="flex items-start justify-between mb-4">
+        <div>
+          <div class="flex items-center gap-2 mb-1">
+            <span class="ticker-badge ${tickerColor}">${ticker}</span>
+            <span class="text-sm text-gray-400">${escapeHtml(p.name || ticker)}</span>
+          </div>
+          <div class="flex items-baseline gap-3 mt-2">
+            <span class="text-4xl font-bold">$${fmt.num(p.price)}</span>
+            <span class="text-lg ${changeClass} font-semibold">
+              ${arrow} ${fmt.pct(p.change_pct)} <span class="text-sm">($${fmt.num(Math.abs(p.change_abs || 0))})</span>
+            </span>
+          </div>
+        </div>
+        <span class="pill rec-${rec}">${rec}</span>
+      </div>
+
+      <!-- Sparkline -->
+      <div class="mb-4" style="height:80px;">
+        <canvas id="chart-${ticker}"></canvas>
+      </div>
+
+      <!-- Métricas -->
+      <div class="grid grid-cols-3 gap-2 mb-4">
+        <div class="metric-tile"><div class="text-xs text-gray-500">Volumen</div><div class="text-sm font-semibold">${fmt.big(p.volume)}</div></div>
+        <div class="metric-tile"><div class="text-xs text-gray-500">Cap. Mercado</div><div class="text-sm font-semibold">$${fmt.big(p.market_cap)}</div></div>
+        <div class="metric-tile"><div class="text-xs text-gray-500">P/E</div><div class="text-sm font-semibold">${fmt.num(p.pe_ratio,1)}</div></div>
+        <div class="metric-tile"><div class="text-xs text-gray-500">P/E Forward</div><div class="text-sm font-semibold">${fmt.num(p.forward_pe,1)}</div></div>
+        <div class="metric-tile"><div class="text-xs text-gray-500">Beta</div><div class="text-sm font-semibold">${fmt.num(p.beta,2)}</div></div>
+        <div class="metric-tile"><div class="text-xs text-gray-500">Vol. Promedio</div><div class="text-sm font-semibold">${fmt.big(p.avg_volume)}</div></div>
+      </div>
+
+      <!-- Rango 52 semanas -->
+      <div class="mb-4">
+        <div class="flex justify-between text-xs text-gray-500 mb-1">
+          <span>52W Low: $${fmt.num(p.week52_low)}</span>
+          <span class="text-gray-300 font-semibold">${rangePos.toFixed(0)}% del rango</span>
+          <span>52W High: $${fmt.num(p.week52_high)}</span>
+        </div>
+        <div class="range-bar">
+          <div class="range-marker" style="left:${rangePos}%;"></div>
+        </div>
+      </div>
+
+      <!-- Consenso de analistas -->
+      <div class="metric-tile mb-4">
+        <div class="flex justify-between items-center mb-2">
+          <span class="text-xs text-gray-500 uppercase tracking-wider">Consenso de Analistas</span>
+          <span class="text-xs text-gray-400">${a.num_analysts || 0} analistas</span>
+        </div>
+        <div class="flex items-center justify-between">
+          <span class="text-base font-bold text-blue-400">${escapeHtml(a.consensus || 'N/A')}</span>
+          ${targetUpside !== null ? `<span class="text-sm ${targetUpside>=0?'pos':'neg'}">${fmt.pct(targetUpside)} al objetivo</span>` : ''}
+        </div>
+        <div class="grid grid-cols-3 gap-2 mt-2 text-xs">
+          <div><div class="text-gray-500">Bajo</div><div class="font-semibold">$${fmt.num(a.target_low)}</div></div>
+          <div><div class="text-gray-500">Medio</div><div class="font-semibold text-blue-300">$${fmt.num(a.target_mean)}</div></div>
+          <div><div class="text-gray-500">Alto</div><div class="font-semibold">$${fmt.num(a.target_high)}</div></div>
+        </div>
+      </div>
+
+      <!-- Sentimiento de IA -->
+      <div class="mb-4">
+        <div class="flex justify-between items-center mb-2">
+          <span class="text-xs text-gray-500 uppercase tracking-wider">Sentimiento IA</span>
+          <span class="text-sm font-semibold" style="color:${sentColor}">${escapeHtml(i.sentiment_label || 'Neutral')} · ${sentScore}/10</span>
+        </div>
+        <div class="sentiment-bar">
+          <div class="sentiment-fill" style="width:${sentPct}%;background:${sentColor}"></div>
+        </div>
+      </div>
+
+      <!-- Tendencias clave -->
+      <div class="mb-4">
+        <div class="text-xs text-gray-500 uppercase tracking-wider mb-2">Tendencias Clave</div>
+        <ul>${trendsHtml}</ul>
+      </div>
+
+      <!-- Factores de riesgo -->
+      <div class="mb-4">
+        <div class="text-xs text-gray-500 uppercase tracking-wider mb-2">Factores de Riesgo</div>
+        <ul>${risksHtml}</ul>
+      </div>
+
+      <!-- Recomendación -->
+      <div class="metric-tile mb-4 ${rec==='COMPRAR'?'glow-green':rec==='VENDER'?'glow-red':''}">
+        <div class="flex items-start gap-3">
+          <span class="pill rec-${rec} flex-shrink-0">${rec}</span>
+          <div class="flex-1">
+            <p class="text-sm text-gray-200">${escapeHtml(i.recommendation_rationale || 'Sin justificación disponible')}</p>
+          </div>
+        </div>
+        <div class="mt-3 pt-3 border-t border-gray-700 text-xs">
+          <span class="text-gray-500">📌 Catalizador clave:</span>
+          <span class="text-gray-300 ml-1">${escapeHtml(i.price_catalyst || 'N/A')}</span>
+        </div>
+      </div>
+
+      <!-- Noticias -->
+      <div>
+        <div class="text-xs text-gray-500 uppercase tracking-wider mb-2">Noticias Recientes</div>
+        <div class="space-y-1 max-h-72 overflow-y-auto">${newsHtml}</div>
+      </div>
+    </div>
+  `;
+}
+
+function escapeHtml(s) {
+  if (s == null) return '';
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function escapeAttr(s) { return escapeHtml(s); }
+
+function renderSparkline(ticker, sparkline, changePct) {
+  const ctx = document.getElementById(`chart-${ticker}`);
+  if (!ctx || !sparkline || sparkline.length === 0) return;
+  if (charts[ticker]) charts[ticker].destroy();
+
+  const color = changePct >= 0 ? '#3fb950' : '#f85149';
+  const fill  = changePct >= 0 ? 'rgba(63,185,80,.12)' : 'rgba(248,81,73,.12)';
+
+  charts[ticker] = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: sparkline.map(p => p.date),
+      datasets: [{
+        data: sparkline.map(p => p.close),
+        borderColor: color,
+        backgroundColor: fill,
+        borderWidth: 2,
+        fill: true,
+        pointRadius: 0,
+        tension: 0.35,
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { display: false }, tooltip: {
+        backgroundColor:'#161b22', borderColor:'#30363d', borderWidth:1,
+        callbacks: { label: c => '$' + Number(c.raw).toFixed(2) }
+      }},
+      scales: {
+        x: { display: false },
+        y: { display: false, grace: '5%' },
+      },
+      interaction: { intersect: false, mode: 'index' },
+    }
+  });
+}
+
+async function loadData() {
+  document.getElementById('loadingState').classList.remove('hidden');
+  document.getElementById('errorState').classList.add('hidden');
+  document.getElementById('stockGrid').classList.add('hidden');
+  document.getElementById('summarySection').classList.add('hidden');
+
+  try {
+    const resp = await fetch('/api/stock-data');
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({error: 'Error desconocido'}));
+      throw new Error(err.error || `HTTP ${resp.status}`);
+    }
+    const data = await resp.json();
+    renderDashboard(data);
+  } catch (e) {
+    document.getElementById('loadingState').classList.add('hidden');
+    document.getElementById('errorState').classList.remove('hidden');
+    document.getElementById('errorMessage').textContent = e.message || 'Error cargando datos';
+  }
+}
+
+function renderDashboard(data) {
+  const stocks = data.stocks || {};
+  const insights = data.insights || {};
+  const grid = document.getElementById('stockGrid');
+
+  const tickers = ['META', 'NVDA'];
+  grid.innerHTML = tickers.map(t => buildStockCard(t, {
+    ...(stocks[t] || {}),
+    insight: insights[t] || {},
+  })).join('');
+
+  // Renderizar sparklines tras el inyectado del DOM
+  setTimeout(() => {
+    tickers.forEach(t => {
+      const sp = stocks[t]?.price?.sparkline || [];
+      const ch = stocks[t]?.price?.change_pct || 0;
+      renderSparkline(t, sp, ch);
+    });
+  }, 50);
+
+  // Resumen diario
+  const summary = insights.daily_summary;
+  if (summary) {
+    document.getElementById('dailySummary').textContent = summary;
+    document.getElementById('summarySection').classList.remove('hidden');
+  }
+
+  // Timestamps
+  const fetched = data.fetched_at ? new Date(data.fetched_at) : new Date();
+  document.getElementById('lastUpdate').textContent = '⏱ Actualizado: ' + fetched.toLocaleString('es-ES', {
+    timeZone: 'America/Los_Angeles', dateStyle: 'medium', timeStyle: 'short'
+  }) + ' PDT';
+
+  if (data.next_refresh_at) {
+    scheduleRefresh(data.next_refresh_at);
+  }
+
+  document.getElementById('loadingState').classList.add('hidden');
+  document.getElementById('stockGrid').classList.remove('hidden');
+}
+
+function scheduleRefresh(nextRefreshIso) {
+  if (nextRefreshTimer) clearTimeout(nextRefreshTimer);
+  const next = new Date(nextRefreshIso);
+  const now = new Date();
+  const ms = next - now;
+  document.getElementById('nextRefresh').textContent = '🔄 Próxima actualización: ' +
+    next.toLocaleString('es-ES', { timeZone: 'America/Los_Angeles', dateStyle: 'medium', timeStyle: 'short' }) + ' PDT';
+
+  if (ms > 0 && ms < 2147483647) {
+    nextRefreshTimer = setTimeout(() => {
+      window.location.reload();
+    }, ms + 30000);  // 30s buffer para que el backend complete la actualización
+  }
+}
+
+async function manualRefresh() {
+  const btn = document.getElementById('refreshBtn');
+  btn.disabled = true;
+  btn.textContent = '⟳ Actualizando...';
+  try {
+    await fetch('/api/refresh', { method: 'POST' });
+    // Esperar un poco y recargar
+    setTimeout(() => loadData().then(() => {
+      btn.disabled = false;
+      btn.textContent = '↻ Actualizar';
+    }), 8000);
+  } catch (e) {
+    btn.disabled = false;
+    btn.textContent = '↻ Actualizar';
+  }
+}
+
+// Inicializar
+loadData();
+
+// Recargar cada 5 minutos para tomar datos actualizados del caché
+setInterval(loadData, 300000);
+</script>
+</body>
+</html>

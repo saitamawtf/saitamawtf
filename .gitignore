@@ -22,6 +22,10 @@ env/
 *.log
 logs/
 
+# Caché de runtime
+dashboard/trades.db
+stock_dashboard/stock_cache.json
+
 # IDEs
 .vscode/
 .idea/

@@ -11,9 +11,10 @@ This is an **Opening Range Breakout (ORB) automated trading bot** for BTC perpet
 
 The bot runs only during the NY session (roughly 13:30–21:00 UTC) and skips the day if no breakout occurs by 12:00 PM NY (17:00 UTC — the "bad day" threshold).
 
-There are **two execution modes**:
+There are **three execution modes**:
 1. **CLI / standalone** — `python main.py` (no UI)
-2. **Web dashboard** — `python -m dashboard.app` (FastAPI on port 8000)
+2. **ORB web dashboard** — `python -m dashboard.app` (FastAPI on port 8000)
+3. **Stock insights dashboard** — `python -m stock_dashboard.app` (FastAPI on port 8001) — agrega noticias, datos de mercado y análisis de IA (Claude Sonnet 4.6) para META y NVDA con actualización automática a las 9:00 AM PDT
 
 ---
 
@@ -43,6 +44,14 @@ saitamawtf/
 │   ├── trades.db                # SQLite database (git-ignored, created at runtime)
 │   └── templates/
 │       └── index.html           # Single-page UI (Tailwind CSS + Chart.js via CDN)
+├── stock_dashboard/             # Dashboard de insights bursátiles (META & NVDA)
+│   ├── app.py                   # FastAPI en puerto 8001 + APScheduler diario 9 AM PDT
+│   ├── data_fetcher.py          # yfinance (precio/analistas) + RSS (noticias)
+│   ├── ai_analyzer.py           # Claude Sonnet 4.6 con prompt caching + JSON estructurado
+│   ├── cache.py                 # Caché en JSON (frescura: <1h o post 9AM PDT)
+│   ├── stock_cache.json         # Caché generado en runtime (git-ignored)
+│   └── templates/
+│       └── stock_index.html     # SPA con Tailwind + Chart.js sparklines
 └── utils/                       # Utility module (currently empty)
 ```
 
